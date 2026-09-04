@@ -186,9 +186,9 @@ payphone Avail; dialing 2601 echoes, 2602 plays a tone, 2600 reaches WOPR after 
 
 ### Build spike (highest risk — do first in this phase, may run in parallel with Phase 4)
 
-- [ ] T059 [US5] Asterisk source-build spike on the mini: `ssh -t wopr-mini`; `brew install jansson libxml2 pkg-config libedit`; download `asterisk-22-current.tar.gz` to `~/asterisk-build`; run the configure line from research.md R7 and `make menuselect.makeopts`; capture any failure verbatim into `specs/001-whistle-wopr-daemon/research.md` R7 "Build log" and adjust flags until `configure` and `menuselect` succeed
-- [ ] T060 [US5] Continue the spike: `menuselect --enable app_audiosocket --enable res_audiosocket --enable func_uuid --enable chan_pjsip --enable codec_ulaw --disable BUILD_NATIVE`; `make -j10`; `sudo make install` into `/opt/asterisk`; `/opt/asterisk/sbin/asterisk -V`; start in foreground once and confirm `module show like audiosocket` lists 2 modules; if the native build is unrecoverable, stop and switch to the colima fallback in research.md R7/R21 (new tasks would be added via `/speckit-converge`)
-- [ ] T061 [US5] Create `deploy/asterisk/menuselect.makeopts` from the working spike selection (`menuselect/menuselect --list-options` output trimmed to the enabled set) so rebuilds are reproducible
+- [X] T059 [US5] Asterisk source-build spike on the mini: `ssh -t wopr-mini`; `brew install jansson libxml2 pkg-config libedit`; download `asterisk-22-current.tar.gz` to `~/asterisk-build`; run the configure line from research.md R7 and `make menuselect.makeopts`; capture any failure verbatim into `specs/001-whistle-wopr-daemon/research.md` R7 "Build log" and adjust flags until `configure` and `menuselect` succeed
+- [X] T060 [US5] Continue the spike: `menuselect --enable app_audiosocket --enable res_audiosocket --enable func_uuid --enable chan_pjsip --enable codec_ulaw --disable BUILD_NATIVE`; `make -j10`; `sudo make install` into `/opt/asterisk`; `/opt/asterisk/sbin/asterisk -V`; start in foreground once and confirm `module show like audiosocket` lists 2 modules; if the native build is unrecoverable, stop and switch to the colima fallback in research.md R7/R21 (new tasks would be added via `/speckit-converge`)
+- [X] T061 [US5] Create `deploy/asterisk/menuselect.makeopts` from the working spike selection (`menuselect/menuselect --list-options` output trimmed to the enabled set) so rebuilds are reproducible
 
 ### Configuration
 

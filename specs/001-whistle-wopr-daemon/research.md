@@ -124,7 +124,13 @@ included) but fails linking `main/libasteriskpj.dylib`: `main/Makefile` hard-cod
 `PJ_TARGET := aarch64-apple-darwin25.2.0` in its Darwin branch while the bundled pjproject
 builds under the real host triplet (`aarch64-apple-darwin25.6.0`). Fix: after `configure`,
 `sed -i "" "s/^PJ_TARGET := .*/PJ_TARGET := $(./config.guess)/" main/Makefile`. Baked into
-`provision.sh`. (Upstream bug worth reporting.)
+`provision.sh`. (Upstream bug worth reporting.) Two more modules fail on macOS and are disabled
+in menuselect: `res_geolocation` (embeds XML with `ld -r -b binary`, unsupported by Apple ld) and
+`res_http_websocket` (Linux-only `TCP_KEEPIDLE`), plus their dependents
+`res_pjsip_transport_websocket` and `chan_websocket`. With those four off, `make -j10` completes
+(≈ 12 min on the M4) and `res_audiosocket.so`, `app_audiosocket.so`, `chan_pjsip.so`,
+`func_uuid.so`, `codec_ulaw.so` all build. The resulting `menuselect.makeopts` is committed as
+`deploy/asterisk/menuselect.makeopts`.
 
 **Risk handling**: The very first task on the mini after hardware verification is a build spike.
 If it fails, the plan's fallback is colima + the official `asterisk` Linux container image with

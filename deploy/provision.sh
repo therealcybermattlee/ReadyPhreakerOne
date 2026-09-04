@@ -108,8 +108,12 @@ step_asterisk_build() {
     # machine); the bundled pjproject builds under the real triplet, so the link fails. Use ours.
     sed -i "" "s/^PJ_TARGET := .*/PJ_TARGET := $(./config.guess)/" main/Makefile
     make menuselect.makeopts > "$BUILD_DIR/menuselect.log" 2>&1
+    # res_geolocation embeds XML via `ld -r -b binary` (no Apple ld); res_http_websocket uses
+    # Linux-only TCP_KEEPIDLE. Neither is needed; their dependents go with them.
     menuselect/menuselect --enable app_audiosocket --enable res_audiosocket --enable func_uuid \
-      --enable chan_pjsip --enable codec_ulaw --disable BUILD_NATIVE menuselect.makeopts
+      --enable chan_pjsip --enable codec_ulaw --disable BUILD_NATIVE \
+      --disable res_geolocation --disable res_http_websocket --disable res_pjsip_transport_websocket \
+      --disable chan_websocket menuselect.makeopts
     caffeinate -i -s make -j"$(sysctl -n hw.ncpu)" > "$BUILD_DIR/make.log" 2>&1 || { tail -40 "$BUILD_DIR/make.log"; fail "make (see $BUILD_DIR/make.log)"; }
   fi
   [ -f apps/app_audiosocket.so ] && [ -f res/res_audiosocket.so ] || fail "audiosocket modules did not build"

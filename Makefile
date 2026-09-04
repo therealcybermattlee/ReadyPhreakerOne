@@ -31,7 +31,7 @@ provision: check-mini sync
 	ssh -t $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && ./deploy/provision.sh $(PROVISION_ARGS)'
 
 verify: check-mini
-	ssh $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && ./deploy/provision.sh --verify'
+	ssh -t $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && ./deploy/provision.sh --verify'
 
 deploy-daemon: check-mini sync
 	ssh -t $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && cp wopr_daemon.py /opt/wopr/wopr_daemon.py && (cmp -s requirements.txt /opt/wopr/requirements.txt || (cp requirements.txt /opt/wopr/ && /opt/wopr/venv/bin/pip install -q -r /opt/wopr/requirements.txt)) && sudo launchctl kickstart -k system/com.crunchwhistle.wopr && echo restarted'
