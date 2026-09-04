@@ -259,3 +259,41 @@ class SynthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TeardownTests(unittest.TestCase):
+    """Generation counter: frames queued before a barge-in must never be sent afterwards."""
+
+    def test_stale_generation_frames_are_dropped(self):
+        import asyncio
+
+        async def scenario():
+            class _W:  # minimal StreamWriter stand-in
+                def __init__(self): self.sent = []
+                def write(self, b): self.sent.append(b)
+                async def drain(self): pass
+                def close(self): pass
+                def get_extra_info(self, k): return None
+            wr = _W()
+            sess = w.CallSession(b"\x00" * 16, None, wr, w.Config())
+            sess.playback_gen = 1
+            await sess.enqueue([b"\x01" * w.FRAME_BYTES] * 5)     # gen 1 frames
+            sess.playback_gen = 2                                  # barge-in happened
+            dropped = sess.drain()
+            self.assertEqual(dropped, 5)
+            await sess.enqueue([b"\x02" * w.FRAME_BYTES] * 2)     # gen 2 frames
+            # run the writer for a few ticks, then close
+            task = asyncio.create_task(w.writer_task(sess))
+            await asyncio.sleep(0.12)
+            sess.closed = True
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, w.CallEnded):
+                pass
+            payloads = [f[3:] for f in wr.sent]
+            self.assertTrue(all(p != b"\x01" * w.FRAME_BYTES for p in payloads), "stale frame leaked")
+            self.assertEqual(sum(p == b"\x02" * w.FRAME_BYTES for p in payloads), 2)
+            self.assertTrue(sess.outbound_q.empty())
+        asyncio.run(scenario())

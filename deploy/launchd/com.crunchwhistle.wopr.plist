@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.crunchwhistle.wopr</string>
+  <!-- bash sources /opt/wopr/wopr.env (WOPR_*, HF_*) then execs the daemon -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>set -a; . /opt/wopr/wopr.env; exec /opt/wopr/venv/bin/python /opt/wopr/wopr_daemon.py</string>
+  </array>
+  <key>UserName</key><string>__USER__</string>
+  <key>GroupName</key><string>staff</string>
+  <key>WorkingDirectory</key><string>/opt/wopr</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>__HOME__</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/opt/wopr/log/wopr.log</string>
+  <key>StandardErrorPath</key><string>/opt/wopr/log/wopr.log</string>
+</dict>
+</plist>
