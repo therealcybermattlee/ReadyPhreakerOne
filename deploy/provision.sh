@@ -104,6 +104,9 @@ step_asterisk_build() {
     ./configure --prefix="$AST_DIR" --with-pjproject-bundled --with-jansson-bundled \
       --with-ssl="$(brew --prefix openssl@3)" CFLAGS="-I$(brew --prefix)/include" LDFLAGS="-L$(brew --prefix)/lib" \
       > "$BUILD_DIR/configure.log" 2>&1 || { tail -30 "$BUILD_DIR/configure.log"; fail "configure (see $BUILD_DIR/configure.log)"; }
+    # Asterisk 22.11 main/Makefile hard-codes PJ_TARGET := aarch64-apple-darwin25.2.0 (a developer's
+    # machine); the bundled pjproject builds under the real triplet, so the link fails. Use ours.
+    sed -i "" "s/^PJ_TARGET := .*/PJ_TARGET := $(./config.guess)/" main/Makefile
     make menuselect.makeopts > "$BUILD_DIR/menuselect.log" 2>&1
     menuselect/menuselect --enable app_audiosocket --enable res_audiosocket --enable func_uuid \
       --enable chan_pjsip --enable codec_ulaw --disable BUILD_NATIVE menuselect.makeopts

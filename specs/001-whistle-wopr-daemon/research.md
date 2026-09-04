@@ -117,6 +117,15 @@ the documented fallback if the native build fails); FreeSWITCH (no formula eithe
 said Asterisk); MacPorts `asterisk` port (exists historically but mixes package managers;
 second fallback).
 
+**Build log (2026-09-04, Asterisk 22.11.0 on macOS 26.6.2 / M4)**: `configure` with
+`--with-pjproject-bundled --with-jansson-bundled --with-ssl=$(brew --prefix openssl@3)` succeeds
+unchanged. `make` compiles all modules (app_audiosocket, res_audiosocket, chan_pjsip, func_uuid
+included) but fails linking `main/libasteriskpj.dylib`: `main/Makefile` hard-codes
+`PJ_TARGET := aarch64-apple-darwin25.2.0` in its Darwin branch while the bundled pjproject
+builds under the real host triplet (`aarch64-apple-darwin25.6.0`). Fix: after `configure`,
+`sed -i "" "s/^PJ_TARGET := .*/PJ_TARGET := $(./config.guess)/" main/Makefile`. Baked into
+`provision.sh`. (Upstream bug worth reporting.)
+
 **Risk handling**: The very first task on the mini after hardware verification is a build spike.
 If it fails, the plan's fallback is colima + the official `asterisk` Linux container image with
 host networking, started by a LaunchDaemon running `colima start` as the admin user.
