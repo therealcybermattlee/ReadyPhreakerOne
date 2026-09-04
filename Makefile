@@ -22,8 +22,10 @@ probe: check-mini
 test: check-mini
 	ssh $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && $(PY) -m unittest discover -s tests -v'
 
+# caffeinate keeps the mini awake for the run (its idle sleep is 1 min until provisioning fixes pmset)
+HARNESS_ARGS ?=
 harness: check-mini sync
-	ssh $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && ($(PY) wopr_daemon.py --stub-llm --port $(DEV_PORT) > /tmp/wopr-dev.log 2>&1 & echo $$! > /tmp/wopr-dev.pid); sleep 2; $(PY) harness.py synth >/dev/null && $(PY) harness.py run --port $(DEV_PORT); rc=$$?; kill $$(cat /tmp/wopr-dev.pid) 2>/dev/null; exit $$rc'
+	ssh $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && (caffeinate -i -s $(PY) wopr_daemon.py --stub-llm --port $(DEV_PORT) --stats-port 9193 > /tmp/wopr-dev.log 2>&1 & echo $$! > /tmp/wopr-dev.pid); for i in $$(seq 1 60); do nc -z 127.0.0.1 $(DEV_PORT) 2>/dev/null && break; sleep 1; done; $(PY) harness.py synth >/dev/null && caffeinate -i -s $(PY) harness.py run --port $(DEV_PORT) --stats-port 9193 $(HARNESS_ARGS); rc=$$?; kill $$(cat /tmp/wopr-dev.pid) 2>/dev/null; exit $$rc'
 
 provision: check-mini sync
 	ssh -t $(MINI) '$(REMOTE_ENV); cd $(REMOTE_DIR) && ./deploy/provision.sh $(PROVISION_ARGS)'
@@ -42,5 +44,6 @@ local-test:
 	$(PY) -m unittest discover -s tests -v
 
 local-harness:
-	@($(PY) wopr_daemon.py --stub-llm --port $(DEV_PORT) > /tmp/wopr-dev.log 2>&1 & echo $$! > /tmp/wopr-dev.pid); sleep 2; \
-	$(PY) harness.py synth >/dev/null && $(PY) harness.py run --port $(DEV_PORT); rc=$$?; kill $$(cat /tmp/wopr-dev.pid) 2>/dev/null; exit $$rc
+	@($(PY) wopr_daemon.py --stub-llm --port $(DEV_PORT) --stats-port 9193 > /tmp/wopr-dev.log 2>&1 & echo $$! > /tmp/wopr-dev.pid); \
+	for i in $$(seq 1 60); do nc -z 127.0.0.1 $(DEV_PORT) 2>/dev/null && break; sleep 1; done; \
+	$(PY) harness.py synth >/dev/null && $(PY) harness.py run --port $(DEV_PORT) --stats-port 9193 $(HARNESS_ARGS); rc=$$?; kill $$(cat /tmp/wopr-dev.pid) 2>/dev/null; exit $$rc

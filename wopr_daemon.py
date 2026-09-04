@@ -309,8 +309,18 @@ class _UTCFormatter(logging.Formatter):
         return time.strftime("%Y-%m-%dT%H:%M:%S", ct) + f".{int(record.msecs):03d}Z"
 
 
+class _CallDefault(logging.Filter):
+    """Third-party records have no `call` attribute; give them the server marker."""
+
+    def filter(self, record):
+        if not hasattr(record, "call"):
+            record.call = "-"
+        return True
+
+
 def setup_logging(level: str) -> None:
     h = logging.StreamHandler(sys.stdout)
+    h.addFilter(_CallDefault())
     h.setFormatter(_UTCFormatter("%(asctime)s %(levelname)s call=%(call)s %(message)s"))
     root = logging.getLogger()
     root.handlers[:] = [h]
@@ -597,7 +607,7 @@ async def llm_reply(history: list[dict], user_text: str, *, url: str, model: str
     reply = postprocess_reply(content)
     if log:
         log.info(kv(event="llm", ms=sw.ms, prompt_ms=timing["prompt_ms"], gen_ms=timing["gen_ms"],
-                    tokens=timing["tokens"], chars=len(reply), done=timing["done_reason"]))
+                    tokens=timing["tokens"], chars=len(reply), done=timing["done_reason"], reply=reply))
     return reply, timing
 
 
@@ -756,6 +766,7 @@ class Config:
     model: str = DEFAULTS["model"]
     whisper_model: str = DEFAULTS["whisper_model"]
     stats_port: int = 0
+    no_stt: bool = False      # skip Whisper entirely (detector-only harness runs)
 
 
 _WINK_FRAMES: list[bytes] | None = None
@@ -946,6 +957,8 @@ async def conversation(sess: CallSession) -> None:
         turn_sw = Stopwatch().__enter__()
         frames: list[bytes] | None = None
         try:
+            if cfg.no_stt:
+                raise PipelineError("stt", "disabled (--no-stt)")
             text = await transcribe(utt, cfg.whisper_model, sess.log)
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
@@ -1110,11 +1123,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--model", default=env.get("WOPR_MODEL", DEFAULTS["model"]))
     p.add_argument("--whisper-model", default=env.get("WOPR_WHISPER_MODEL", DEFAULTS["whisper_model"]))
     p.add_argument("--stats-port", type=int, default=int(env.get("WOPR_STATS_PORT", "0")))
+    p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
-                 stats_port=a.stats_port)
+                 stats_port=a.stats_port, no_stt=a.no_stt)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
@@ -1133,6 +1147,17 @@ async def amain(cfg: Config) -> int:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
+
+    # Preload Whisper before accepting calls: the import + model load hold the GIL for seconds
+    # and would stall the 20 ms pacing loop if they happened lazily on the first utterance.
+    if not cfg.no_stt:
+        try:
+            with Stopwatch() as sw:
+                await asyncio.to_thread(get_whisper, cfg.whisper_model)
+            log.info(kv(event="whisper_ready", model=cfg.whisper_model, ms=sw.ms))
+        except Exception as e:  # noqa: BLE001
+            log.error(kv(event="startup_check_failed", what="whisper", err=f"{type(e).__name__}: {e}"[:200]))
+            return 1
 
     server = await asyncio.start_server(lambda r, w: handle_call(r, w, cfg), cfg.bind, cfg.port)
     log.info(kv(event="listen", bind=cfg.bind, port=cfg.port))
