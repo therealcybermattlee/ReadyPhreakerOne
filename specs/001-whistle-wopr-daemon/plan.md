@@ -247,6 +247,7 @@ No constitution violations. Additions beyond the literal spec, with justificatio
 | Addition | Why Needed | Simpler Alternative Rejected Because |
 |---|---|---|
 | Absolute energy floor in the detector | Ratio of near-zero bins on silence is meaningless | Pure ratio would fire on silence, failing SC-003 |
+| Spectral-purity gate (`PURITY_MIN`) in the detector | Verified 2026-09-04: a loud pure tone far from 2600 Hz (e.g. the 480 Hz wink, dial tone) leaks into bins 25/26/27 almost equally, so the adjacent-bin ratio reads ≈ 0.5 and clears the floor. Requiring E2600 to be ≥ 10 % of the window's total energy rejects it while a ±50 Hz whistle still scores ≥ 0.2 | Raising the floor alone would also reject quiet real whistles |
 | Outbound-verdict ring echo guard | Keeps barge-in live during continuous TTS | Fixed suppression stays active for the whole reply, which the spec forbids |
 | `--stub-llm` flag | Harness must run with Ollama stopped | Otherwise detector tests depend on a 5 GB model being resident |
 | Asterisk source build script | No Homebrew formula exists (verified 2026-09-04) | Docker/VM needs a login session or a second OS to manage on a headless mini |
