@@ -53,7 +53,7 @@ preflight() {
   brew=$(brew --prefix 2>/dev/null || true); clt=$(xcode-select -p 2>/dev/null || true)
   log "host: $(sysctl -n machdep.cpu.brand_string), $mem GB, macOS $os, arch $arch, user $SVC_USER"
   log "brew: ${brew:-MISSING}   xcode CLT: ${clt:-MISSING}   python3.14: $(python3.14 --version 2>/dev/null || echo MISSING)"
-  log "ollama: $(ollama --version 2>/dev/null | tr -d '\n' || echo none)   asterisk: $($AST_DIR/sbin/asterisk -V 2>/dev/null || echo none)   espeak-ng: $(espeak-ng --version 2>/dev/null | head -1 || echo none)"
+  log "ollama: $(ollama --version 2>&1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || echo none)   asterisk: $($AST_DIR/sbin/asterisk -V 2>/dev/null || echo none)   espeak-ng: $(espeak-ng --version 2>/dev/null | head -1 || echo none)"
   log "sleep: $(pmset -g | awk '/^ *sleep/{print $2}')   firewall: $(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate | tr -d '\n')"
   [ "$arch" = arm64 ] || { log "not Apple Silicon"; exit 2; }
   [ -n "$brew" ] || { log "Homebrew missing (https://brew.sh)"; exit 2; }
@@ -70,17 +70,21 @@ step_brew() {
   local pkgs="espeak-ng jansson libxml2 pkg-config libedit python@3.14 sqlite openssl@3 ollama" missing=""
   for p in $pkgs; do brew list --formula "$p" >/dev/null 2>&1 || missing="$missing $p"; done
   if [ -n "$missing" ]; then brew install -q $missing; done_ "brew install$missing"; else skip "brew packages present"; fi
-  local ov; ov=$(ollama --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo 0)
+  local ov; ov=$(ollama --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo 0)
   if version_ge "$ov" "$OLLAMA_MIN"; then skip "ollama $ov ≥ $OLLAMA_MIN"; else brew upgrade -q ollama; done_ "ollama upgraded from $ov"; fi
 }
 
 step_dirs() {
-  if [ -d "$WOPR_DIR/log" ] && [ -d "$WOPR_DIR/hf" ] && [ -d "$AST_DIR" ] && [ "$(stat -f %Su "$WOPR_DIR")" = "$SVC_USER" ]; then
+  # /opt/pjproject: Asterisk's bundled-pjproject `make install` on Darwin installs pjproject's own
+  # headers/libs there (its configure prefix) even though Asterisk links them statically.
+  local pj=/opt/pjproject
+  if [ -d "$WOPR_DIR/log" ] && [ -d "$WOPR_DIR/hf" ] && [ -d "$AST_DIR" ] && [ -d "$pj" ] \
+     && [ "$(stat -f %Su "$WOPR_DIR")" = "$SVC_USER" ] && [ "$(stat -f %Su "$pj")" = "$SVC_USER" ]; then
     skip "directories"
   else
-    sudo mkdir -p "$WOPR_DIR/log" "$WOPR_DIR/hf" "$AST_DIR"
-    sudo chown -R "$SVC_USER:staff" "$WOPR_DIR" "$AST_DIR"
-    done_ "directories $WOPR_DIR $AST_DIR owned by $SVC_USER"
+    sudo mkdir -p "$WOPR_DIR/log" "$WOPR_DIR/hf" "$AST_DIR" "$pj"
+    sudo chown -R "$SVC_USER:staff" "$WOPR_DIR" "$AST_DIR" "$pj"
+    done_ "directories $WOPR_DIR $AST_DIR $pj owned by $SVC_USER"
   fi
   # a hand-started `ollama serve` would hold 11434 and block the LaunchDaemon
   if ! sudo launchctl print system/com.crunchwhistle.ollama >/dev/null 2>&1; then
