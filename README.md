@@ -149,7 +149,7 @@ Measured on the mini (M4, 16 GB), 2026-09-04, model already resident:
 | STT, 3.5 s utterance, `base.en` int8 | 300 ms |
 | LLM, `qwen3:8b` think off, ~32 tokens | 1.7–1.9 s (prompt 60–180 ms, generation 1.5–1.6 s) |
 | TTS, espeak-ng | 50 ms |
-| reply audio starts after caller stops | **≈ 2.9 s** |
+| reply audio starts after caller stops | **≈ 2.9 s** (real payphone 2026-09-08: 1.3–2.9 s per turn) |
 
 Knobs, all at the top of `wopr_daemon.py` (printed as `event=config` at startup):
 
@@ -184,4 +184,20 @@ The mini's idle sleep was 1 minute out of the box (it slept mid-harness once); p
 - Sentence-streamed TTS (start speaking on the first sentence from the LLM) — would cut ~1 s.
 - Optional Docker dev-box rig for exercising the real dialplan without the mini (research R21).
 - A dedicated `_wopr` service user instead of the admin account (hardening).
-- The 7-day ATA registration soak (SC-014) runs after the phone is wired up.
+- The 7-day ATA registration soak (SC-014) started 2026-09-08; the unattended-reboot and
+  offline checks (quickstart 6.5, 6.6) are still to run.
+
+## First real call (2026-09-08)
+
+HT802 at 10.17.13.139 registered with 3 ms RTT. Off-hook auto-dial to 2600. A human whistle
+through the payphone handset scored ratio 7.3 / purity 0.40 (well inside the gates), the wink
+and greeting played, and a six-turn conversation followed. Highlights from the log:
+
+    stt text="Start my nuclear war. Can we play a game?"
+    llm reply="PROFESSOR FALKEN, YOU WISH TO PLAY A GAME? CHOOSE: CHESS, CHECKERS, BACKG…"
+    stt text="with global nuclear war."
+    llm reply="PROFESSOR FALKEN, YOU HAVE SELECTED GLOBAL THERMONUCLEAR WAR. I SHALL INI…"
+
+Note the HT802's current firmware puts the profile settings under the FXS PORT1 tabs (General /
+SIP / Codec / Call Settings) rather than a separate Profiles page; `deploy/ht802-settings.md`
+lists the same values.

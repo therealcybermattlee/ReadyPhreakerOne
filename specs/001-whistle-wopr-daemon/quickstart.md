@@ -110,3 +110,19 @@ Ollama is restarted by launchd within seconds.
 If step 4's whistle over TTS self-triggers without a whistle, raise `ECHO_GUARD_WINDOWS`; if a
 real whistle over TTS fails, lower it. If real whistles miss, record the handset via a scratch
 `Record()` extension and replay with `harness.py play` while tuning with Scenario 3.
+
+
+## Validation log
+
+| Date | Scenario | Result |
+|---|---|---|
+| 2026-09-04 | 0 hardware probe | M4, 16 GB, macOS 26.6.2, Homebrew, python@3.14, Ollama 0.17 + qwen3:8b present |
+| 2026-09-04 | 1 unit tests | 30/30 on dev box and mini |
+| 2026-09-04 | 2 harness suite | 14/14 on mini (3/3 detects, 0/6 false positives, bargein 31 ms, pacing p95 21 ms); whistle_drift 20/20; soak 100 cycles clean |
+| 2026-09-04 | 3 DEBUG ratios | MIN_BIN_ENERGY set to 1e8 from corpus measurements |
+| 2026-09-04 | 5 live LLM | reply 1.9–2.1 s after speech end (qwen3:8b think off) |
+| 2026-09-08 | 4 provision | 10/10 after two fixes (pjproject dir, modules.conf pubsub dependency) |
+| 2026-09-08 | 6.1–6.4 real phone | HT802 registered (RTT 3 ms); off-hook auto-dial to 2600; real whistle detected (ratio 7.3, purity 0.40); 6-turn conversation; turn latency 1.3–2.9 s |
+| pending | 6.5 reboot with no login | |
+| pending | 6.6 offline (uplink unplugged) | |
+| pending | 6.7 7-day registration soak | started 2026-09-08 |
