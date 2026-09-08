@@ -76,3 +76,18 @@ Then **2600** (or just lift the handset if auto-dial is set): silence. Whistle 2
   that nothing on the mini's firewall blocks UDP 5060 (provisioning adds an allow rule).
 - Registers but no audio → RTP range 10000–10100 must reach the mini; confirm `rtp.conf` and
   that the ATA has NAT traversal off.
+
+## Isolated phone-island addressing (2026-09-08)
+
+When the mini and ATA sit on a dumb switch with no uplink, both take static IPs on
+`192.168.50.0/24`:
+
+| Device | Setting | Value |
+|---|---|---|
+| Mini en0 | static | `192.168.50.1` / `255.255.255.0`, no gateway (Wi-Fi carries the default route) |
+| HT802 | Basic Settings → IP Address | Statically configured: `192.168.50.2`, mask `255.255.255.0`, gateway blank (or `192.168.50.1`) |
+| HT802 | FXS Port 1 → Primary SIP Server | `192.168.50.1` |
+
+Configure the ATA's IP and SIP server **while it is still on the main network** (reachable at its
+current address), Save and Apply, then move its cable to the dumb switch. After that its web UI is
+only reachable from the island (e.g. a laptop plugged into the switch at `192.168.50.9`).
