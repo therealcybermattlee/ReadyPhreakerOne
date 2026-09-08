@@ -163,6 +163,23 @@ Knobs, all at the top of `wopr_daemon.py` (printed as `event=config` at startup)
 - `LLM_NUM_PREDICT`, `MAX_REPLY_CHARS` — reply length. `WOPR_MODEL=llama3.1:8b` in `wopr.env` is the
   documented alternative (`ollama pull` it first).
 
+## Firewall
+
+The mini runs a pf ruleset (`deploy/pf-crunchwhistle.conf`) that default-denies inbound and
+opens only what the stack needs: SSH (22), SIP (5060/udp) and RTP (10000–10100/udp) from the
+ATA's subnet, and ICMP. Loopback and all outbound stay open, so the daemon ↔ Ollama ↔ Asterisk
+paths are untouched. This closes the extra ports Asterisk opens by default (IAX2 4569, etc.).
+
+```
+sudo ./deploy/firewall.sh enable    # install + turn on, with a 180 s dead-man
+sudo ./deploy/firewall.sh keep      # cancel the dead-man once SSH is confirmed
+sudo ./deploy/firewall.sh persist   # boot-time loader (com.crunchwhistle.pf)
+sudo ./deploy/firewall.sh status
+```
+
+The dead-man auto-disables pf if `enable` locks you out. SIP/RTP are scoped to 10.17.13.0/24;
+if the ATA moves subnets, edit the conf and re-run `enable`/`keep`.
+
 ## Operations
 
 ```

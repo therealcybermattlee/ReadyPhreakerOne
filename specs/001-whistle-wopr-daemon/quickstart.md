@@ -123,6 +123,7 @@ real whistle over TTS fails, lower it. If real whistles miss, record the handset
 | 2026-09-04 | 5 live LLM | reply 1.9–2.1 s after speech end (qwen3:8b think off) |
 | 2026-09-08 | 4 provision | 10/10 after two fixes (pjproject dir, modules.conf pubsub dependency) |
 | 2026-09-08 | 6.1–6.4 real phone | HT802 registered (RTT 3 ms); off-hook auto-dial to 2600; real whistle detected (ratio 7.3, purity 0.40); 6-turn conversation; turn latency 1.3–2.9 s |
-| pending | 6.5 reboot with no login | |
+| 2026-09-08 | 6.5 reboot | Services + ATA auto-recover on boot, BUT FileVault halts the mini at the unlock screen until the disk password is entered at the console — unattended boot needs FileVault off or a manual unlock |
 | pending | 6.6 offline (uplink unplugged) | |
 | pending | 6.7 7-day registration soak | started 2026-09-08 |
+| 2026-09-08 | firewall | pf default-deny inbound; only 22 + 5060/RTP (from ATA subnet) + ICMP; ATA stays registered through it; boot loader installed |
