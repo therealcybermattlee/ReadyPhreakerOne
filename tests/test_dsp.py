@@ -392,3 +392,18 @@ class CallbackTests(unittest.TestCase):
         self.assertTrue(c.enable_callback)
         self.assertIn("2605", c.callback_dial)
         self.assertTrue(c.asterisk_bin.endswith("asterisk"))
+
+
+class WinningMoveParaphraseTests(unittest.TestCase):
+    def test_matches_paraphrases_and_canonical(self):
+        rx = w.MOVIE_BEATS["winning_move"]
+        for t in ["The only winning move is not to play.",
+                  "The only way to win is by not making a move.",
+                  "the winning move is not to move",
+                  "not to play"]:
+            self.assertTrue(rx.search(t), t)
+
+    def test_no_false_match_on_normal_chat(self):
+        rx = w.MOVIE_BEATS["winning_move"]
+        for t in ["how about a game of chess", "I want to win the war", "let's play"]:
+            self.assertIsNone(rx.search(t), t)

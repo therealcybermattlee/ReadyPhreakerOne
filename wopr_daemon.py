@@ -441,7 +441,7 @@ MOVIE_BEATS = {
     "joshua":                    re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I),
     "play_game":                 re.compile(r"\b(play|game)\b", re.I),
     "global_thermonuclear_war":  re.compile(r"\b(thermo\s*nuclear|nuclear|therb a nuclear)\b", re.I),
-    "winning_move":              re.compile(r"\b(winning move|winning|not to play)\b", re.I),
+    "winning_move":              re.compile(r"\b(winning move|winning|way to win|not to play|not to move|not mak\w+ a move|no move|only move)\b", re.I),
 }
 # What WOPR speaks when all beats are hit. {flag} is substituted. Author-controlled via WOPR_FLAG_TEXT.
 FLAG_TEXT_DEFAULT = (
