@@ -372,3 +372,23 @@ class MovieQuestTests(unittest.TestCase):
         reveal = w.FLAG_TEXT_DEFAULT.replace("{flag}", "JOSHUA FIVE BY FIVE")
         self.assertIn("JOSHUA FIVE BY FIVE", reveal)
         self.assertNotIn("{flag}", reveal)
+
+
+class CallbackTests(unittest.TestCase):
+    def test_sentinel_uuid_is_16_bytes(self):
+        import uuid
+        self.assertEqual(len(w.CALLBACK_UUID), 16)
+        self.assertEqual(w.CALLBACK_UUID, uuid.UUID("ca11bac0-0000-4000-8000-000000000000").bytes)
+
+    def test_gtw_beat_matches_callback_trigger_phrases(self):
+        rx = w.MOVIE_BEATS["global_thermonuclear_war"]
+        for t in ["let's play global thermonuclear war", "I choose thermonuclear war",
+                  "nuclear war please"]:
+            self.assertTrue(rx.search(t), t)
+        self.assertIsNone(rx.search("how about chess"))
+
+    def test_callback_config_defaults(self):
+        c = w.Config()
+        self.assertTrue(c.enable_callback)
+        self.assertIn("2605", c.callback_dial)
+        self.assertTrue(c.asterisk_bin.endswith("asterisk"))

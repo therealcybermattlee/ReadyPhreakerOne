@@ -107,6 +107,10 @@ MAX_REPLY_CHARS = 280
 # --- Transport --------------------------------------------------------------------------------
 OUTBOUND_QUEUE_FRAMES = 1500  # 30 s of audio; producers block beyond this
 FRAME_PERIOD_S = 0.020
+# Callback: if the caller hangs up mid-thermonuclear-war, WOPR rings the payphone back.
+CALLBACK_UUID = uuid.UUID("ca11bac0-0000-4000-8000-000000000000").bytes   # sentinel = 'this is a callback'
+CALLBACK_DELAY_S = 20         # dramatic pause before the phone rings
+CALLBACK_COOLDOWN_S = 90      # min seconds between callbacks (runaway guard)
 ATTRACT_GAIN = 0.6            # level of the armed-state attract loop (music/message) vs full scale;
                              # kept below 1.0 so handset sidetone doesn't swamp whistle detection
 
@@ -837,7 +841,10 @@ class Config:
     attract: str = ""
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
-    enable_flag: bool = True      # skip Whisper entirely (detector-only harness runs)
+    enable_flag: bool = True
+    enable_callback: bool = True
+    asterisk_bin: str = "/opt/asterisk/sbin/asterisk"
+    callback_dial: str = "PJSIP/payphone extension 2605@payphone"      # skip Whisper entirely (detector-only harness runs)
 
 
 _WINK_FRAMES: list[bytes] | None = None
@@ -882,6 +889,8 @@ class CallSession:
         self.windows_in = 0
         self.attract_idx = 0
         self.quest = MovieQuest()
+        self.is_callback = call_id == CALLBACK_UUID
+        self.played_gtw = False
         self.closed = False
 
     # --- state ---------------------------------------------------------------------------
@@ -1041,6 +1050,8 @@ async def conversation(sess: CallSession) -> None:
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
+            if MOVIE_BEATS["global_thermonuclear_war"].search(text):
+                sess.played_gtw = True
             if cfg.enable_flag and not sess.quest.unlocked:
                 beat = sess.quest.update(text)
                 if beat:
@@ -1087,7 +1098,11 @@ async def conversation(sess: CallSession) -> None:
 
 
 async def brain_task(sess: CallSession) -> None:
-    """ARMED until the first whistle; every later whistle is a barge-in that restarts the session."""
+    """ARMED until the first whistle; every later whistle is a barge-in that restarts the session.
+    On a callback the daemon placed, WOPR greets immediately without waiting for a whistle."""
+    if sess.is_callback:
+        sess.log.info(kv(event="callback_answered"))
+        sess.detected_evt.set()
     while True:
         await sess.detected_evt.wait()
         sess.detected_evt.clear()
@@ -1119,6 +1134,43 @@ async def brain_task(sess: CallSession) -> None:
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         # loop: detected_evt is set → top of loop handles the restart
+
+
+_pending_callbacks: set = set()
+_last_callback_ts: float = 0.0
+
+
+def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
+    """After a hangup during thermonuclear war, ring the payphone back (once, with a cooldown)."""
+    global _last_callback_ts
+    if not cfg.enable_callback or not sess.played_gtw or sess.is_callback:
+        return
+    now = time.monotonic()
+    if now - _last_callback_ts < CALLBACK_COOLDOWN_S:
+        sess.log.info(kv(event="callback_skipped", reason="cooldown"))
+        return
+    _last_callback_ts = now
+    t = asyncio.create_task(_do_callback(cfg, sess.call_hex))
+    _pending_callbacks.add(t)
+    t.add_done_callback(_pending_callbacks.discard)
+    sess.log.info(kv(event="callback_scheduled", delay_s=CALLBACK_DELAY_S, dial=cfg.callback_dial))
+
+
+async def _do_callback(cfg: Config, after_call: str) -> None:
+    log = get_logger(after_call)
+    await asyncio.sleep(CALLBACK_DELAY_S)
+    log.info(kv(event="callback_dialing", target=cfg.callback_dial))
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            cfg.asterisk_bin, "-rx", f"channel originate {cfg.callback_dial}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await proc.communicate()
+        log.info(kv(event="callback_result", rc=proc.returncode,
+                    out=(out or err).decode(errors="replace").strip()[:120]))
+    except FileNotFoundError:
+        log.warning(kv(event="callback_failed", err=f"asterisk not found at {cfg.asterisk_bin}"))
+    except Exception as e:  # noqa: BLE001
+        log.warning(kv(event="callback_failed", err=f"{type(e).__name__}: {e}"[:120]))
 
 
 async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, cfg: Config) -> None:
@@ -1160,6 +1212,7 @@ async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             pass
         sess.log.info(kv(event="call_end", reason=reason, dur_ms=sess.elapsed_ms(), turns=sess.turns,
                          detects=sess.detector.fires, windows=sess.windows_in))
+        maybe_schedule_callback(sess, cfg)
 
 
 ACTIVE_CALLS: dict[str, CallSession] = {}
@@ -1225,12 +1278,17 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
     p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
+    p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
+    p.add_argument("--asterisk-bin", default=env.get("WOPR_ASTERISK_BIN", "/opt/asterisk/sbin/asterisk"))
+    p.add_argument("--callback-dial", default=env.get("WOPR_CALLBACK_DIAL", "PJSIP/payphone extension 2605@payphone"))
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
-                 flag=a.flag, flag_text=a.flag_text, enable_flag=not a.no_flag)
+                 flag=a.flag, flag_text=a.flag_text, enable_flag=not a.no_flag,
+                 enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
+                 callback_dial=a.callback_dial)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 

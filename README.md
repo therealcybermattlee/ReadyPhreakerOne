@@ -188,6 +188,19 @@ WOPR_NO_FLAG=1                         # disable the quest entirely
 
 A second whistle (barge-in) resets the quest along with the conversation.
 
+## WOPR calls back
+
+If the caller chooses **global thermonuclear war** and then hangs up, WOPR rings the payphone
+back after a short pause (`CALLBACK_DELAY_S`, default 20 s) — it doesn't like being left mid-game.
+The daemon asks Asterisk to originate a call to the payphone's callback extension (2605), which
+carries a sentinel UUID so the daemon knows to drop the answerer straight into WOPR, no whistle
+needed. A cooldown (`CALLBACK_COOLDOWN_S`, default 90 s) prevents runaway loops, and a call that
+is itself a callback never schedules another.
+
+Requires the `2605` dialplan extension (in `deploy/asterisk/extensions.conf`). Disable with
+`WOPR_NO_CALLBACK=1`; point it elsewhere with `WOPR_CALLBACK_DIAL` / `WOPR_ASTERISK_BIN`.
+Log events: `callback_scheduled`, `callback_dialing`, `callback_result`, `callback_answered`.
+
 ## Attract loop (waiting audio)
 
 While the line is armed and waiting for the whistle, the daemon can loop an audio file to the
