@@ -35,6 +35,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import wave
 
 import numpy as np
 
@@ -106,6 +107,8 @@ MAX_REPLY_CHARS = 280
 # --- Transport --------------------------------------------------------------------------------
 OUTBOUND_QUEUE_FRAMES = 1500  # 30 s of audio; producers block beyond this
 FRAME_PERIOD_S = 0.020
+ATTRACT_GAIN = 0.6            # level of the armed-state attract loop (music/message) vs full scale;
+                             # kept below 1.0 so handset sidetone doesn't swamp whistle detection
 
 DEFAULTS = {
     "bind": "127.0.0.1",
@@ -122,7 +125,7 @@ TUNABLE_NAMES = [
     "VAD_START_RATIO", "VAD_ABS_MIN", "VAD_START_WINDOWS", "ENDPOINT_MS", "MIN_UTTERANCE_MS",
     "MAX_UTTERANCE_MS", "ESPEAK_VOICE", "ESPEAK_SPEED", "ESPEAK_PITCH", "ESPEAK_AMPLITUDE",
     "LLM_NUM_PREDICT", "LLM_NUM_CTX", "LLM_TEMPERATURE", "LLM_THINK", "LLM_TIMEOUT_S",
-    "LLM_WARMUP_RETRY_S", "HISTORY_MAX_TURNS", "MAX_REPLY_CHARS", "OUTBOUND_QUEUE_FRAMES",
+    "LLM_WARMUP_RETRY_S", "HISTORY_MAX_TURNS", "MAX_REPLY_CHARS", "OUTBOUND_QUEUE_FRAMES", "ATTRACT_GAIN",
 ]
 
 
@@ -237,6 +240,30 @@ def resample(x: np.ndarray, src_sr: int, dst_sr: int, cutoff_hz: float | None = 
     t_dst = np.arange(n_dst) / dst_sr
     z = np.interp(t_dst, t_src, y)
     return np.clip(np.rint(z), -32768, 32767).astype("<i2") if was_int else z.astype(np.float32)
+
+
+ATTRACT_FRAMES: list[bytes] | None = None   # armed-state loop, loaded at startup from --attract
+
+
+def load_wav_file(path: str) -> tuple[int, np.ndarray]:
+    """Read a PCM WAV (any rate, mono/stereo, 16-bit) → (sample_rate, int16 mono samples)."""
+    with wave.open(path, "rb") as wf:
+        sr, ch, sw, n = wf.getframerate(), wf.getnchannels(), wf.getsampwidth(), wf.getnframes()
+        raw = wf.readframes(n)
+    if sw != 2:
+        raise ValueError(f"{path}: need 16-bit PCM WAV, got {sw * 8}-bit")
+    a = np.frombuffer(raw, dtype="<i2")
+    if ch > 1:
+        a = a.reshape(-1, ch).mean(axis=1).astype("<i2")
+    return sr, a
+
+
+def load_attract(path: str, gain: float = ATTRACT_GAIN) -> list[bytes]:
+    """Load an attract-loop WAV, resample to 8 kHz, apply gain, return 320-byte frames."""
+    sr, samples = load_wav_file(path)
+    pcm8k = resample(samples, sr, SAMPLE_RATE)
+    scaled = f32_to_pcm16(np.clip(pcm8k.astype(np.float64) / 32768.0 * gain, -1, 1))
+    return frames_from_pcm(scaled)
 
 
 def frames_from_pcm(pcm: bytes | np.ndarray) -> list[bytes]:
@@ -766,7 +793,8 @@ class Config:
     model: str = DEFAULTS["model"]
     whisper_model: str = DEFAULTS["whisper_model"]
     stats_port: int = 0
-    no_stt: bool = False      # skip Whisper entirely (detector-only harness runs)
+    no_stt: bool = False
+    attract: str = ""      # skip Whisper entirely (detector-only harness runs)
 
 
 _WINK_FRAMES: list[bytes] | None = None
@@ -809,6 +837,7 @@ class CallSession:
         self.stage_timers: dict[str, float] = {}
         self.turns = 0
         self.windows_in = 0
+        self.attract_idx = 0
         self.closed = False
 
     # --- state ---------------------------------------------------------------------------
@@ -816,6 +845,8 @@ class CallSession:
         if new is not self.state:
             self.log.info(kv(event="state", frm=self.state.value, to=new.value))
             self.state = new
+            if new is CallState.ARMED:
+                self.attract_idx = 0
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.t_start) * 1000.0
@@ -919,6 +950,9 @@ async def writer_task(sess: CallSession) -> None:
             pass
         if sess.closed:
             return
+        if frame_body is None and sess.state is CallState.ARMED and ATTRACT_FRAMES:
+            frame_body = ATTRACT_FRAMES[sess.attract_idx % len(ATTRACT_FRAMES)]
+            sess.attract_idx += 1
         if frame_body is None:
             sess.writer.write(SILENCE_FRAME)
             sess.echo_ring.append(False)
@@ -1124,11 +1158,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--whisper-model", default=env.get("WOPR_WHISPER_MODEL", DEFAULTS["whisper_model"]))
     p.add_argument("--stats-port", type=int, default=int(env.get("WOPR_STATS_PORT", "0")))
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
+    p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
-                 stats_port=a.stats_port, no_stt=a.no_stt)
+                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
@@ -1138,6 +1173,15 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
+    global ATTRACT_FRAMES
+    if cfg.attract:
+        try:
+            ATTRACT_FRAMES = load_attract(cfg.attract)
+            log.info(kv(event="attract", path=cfg.attract, frames=len(ATTRACT_FRAMES),
+                        sec=len(ATTRACT_FRAMES) * FRAME_PERIOD_S))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="attract_failed", path=cfg.attract, err=f"{type(e).__name__}: {e}"[:150]))
+
     if getattr(cfg, "check", False):
         ok = await startup_check(cfg, log)
         log.info(kv(event="startup_check", ok=int(ok)))

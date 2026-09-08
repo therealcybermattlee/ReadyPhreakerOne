@@ -297,3 +297,45 @@ class TeardownTests(unittest.TestCase):
             self.assertEqual(sum(p == b"\x02" * w.FRAME_BYTES for p in payloads), 2)
             self.assertTrue(sess.outbound_q.empty())
         asyncio.run(scenario())
+
+
+class AttractTests(unittest.TestCase):
+    def _write_wav(self, path, sr, ch, samples):
+        import wave
+        with wave.open(path, "wb") as wf:
+            wf.setnchannels(ch); wf.setsampwidth(2); wf.setframerate(sr)
+            wf.writeframes(samples.astype("<i2").tobytes())
+
+    def test_load_wav_file_mono_and_stereo(self):
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        mono = w.synth_tone(1000, 100, 0.5, sr=22050)
+        p1 = os.path.join(d, "m.wav"); self._write_wav(p1, 22050, 1, mono)
+        sr, a = w.load_wav_file(p1)
+        self.assertEqual(sr, 22050); self.assertEqual(len(a), len(mono))
+        st = np.repeat(mono, 2)  # fake stereo interleave
+        p2 = os.path.join(d, "s.wav"); self._write_wav(p2, 16000, 2, st)
+        sr2, a2 = w.load_wav_file(p2)
+        self.assertEqual(sr2, 16000); self.assertEqual(len(a2), len(mono))
+
+    def test_load_attract_resamples_and_frames(self):
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        src = w.synth_tone(440, 1000, 0.9, sr=22050)   # 1 s
+        p = os.path.join(d, "a.wav"); self._write_wav(p, 22050, 1, src)
+        frames = w.load_attract(p, gain=0.5)
+        self.assertTrue(all(len(f) == w.FRAME_BYTES for f in frames))
+        self.assertAlmostEqual(len(frames) * 0.02, 1.0, delta=0.05)   # ~1 s at 8 kHz
+        # gain applied: peak of the loaded audio ≈ 0.5 * source peak
+        loaded = np.frombuffer(b"".join(frames), dtype="<i2")
+        self.assertLess(np.max(np.abs(loaded)), 0.7 * 32767)
+        self.assertGreater(np.max(np.abs(loaded)), 0.3 * 32767)
+
+    def test_load_attract_rejects_non16bit(self):
+        import tempfile, os, wave
+        d = tempfile.mkdtemp(); p = os.path.join(d, "b.wav")
+        with wave.open(p, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(1); wf.setframerate(8000)
+            wf.writeframes(b"\x80" * 800)
+        with self.assertRaises(ValueError):
+            w.load_attract(p)

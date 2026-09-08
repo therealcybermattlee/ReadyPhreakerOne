@@ -163,6 +163,27 @@ Knobs, all at the top of `wopr_daemon.py` (printed as `event=config` at startup)
 - `LLM_NUM_PREDICT`, `MAX_REPLY_CHARS` — reply length. `WOPR_MODEL=llama3.1:8b` in `wopr.env` is the
   documented alternative (`ollama pull` it first).
 
+## Attract loop (waiting audio)
+
+While the line is armed and waiting for the whistle, the daemon can loop an audio file to the
+caller instead of silence — a song, or a spoken hint. The instant a 2600 Hz whistle is detected,
+it cuts to the wink and WOPR. Detection runs on the caller's mic and the sidetone guard already
+prevents the outbound audio from self-triggering, so listening-while-playing is safe.
+
+```
+# make a spoken default (Aperture-style "whistle to begin") with the local voice:
+venv/bin/python harness.py attract --out clips/attract.wav
+# or convert your own song/message to the required 8 kHz mono 16-bit:
+venv/bin/python harness.py attract --from-wav still_alive.wav --out clips/attract.wav
+#   (or: ffmpeg -i still_alive.mp3 -ac 1 -ar 8000 -sample_fmt s16 clips/attract.wav)
+
+# enable it: point WOPR_ATTRACT at the file (in /opt/wopr/wopr.env) and restart the service.
+```
+
+Set `WOPR_ATTRACT=` empty (or remove it) for silence. `ATTRACT_GAIN` (top of `wopr_daemon.py`,
+default 0.6) keeps the loop below full scale so handset sidetone doesn't swamp whistle detection.
+Note: "Still Alive" (Aperture Science / Portal) is copyrighted by Valve — supply it yourself.
+
 ## Firewall
 
 The mini runs a pf ruleset (`deploy/pf-crunchwhistle.conf`) that default-denies inbound and

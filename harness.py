@@ -726,6 +726,15 @@ def main(argv=None) -> int:
     pr.add_argument("--stats-port", type=int, default=0)
     pr.add_argument("--selftrigger-s", type=float, default=20.0)
 
+    pa = sub.add_parser("attract", help="render spoken text (or resample a WAV) to an 8 kHz attract-loop file")
+    pa.add_argument("--text", default=("Welcome to the Aperture Science computer aided enrichment line. "
+                                       "To begin testing, whistle at two thousand six hundred hertz. "
+                                       "Thank you for helping us help you help us all."))
+    pa.add_argument("--from-wav", default="", help="convert this WAV instead of speaking --text")
+    pa.add_argument("--voice", default="en-us+f3")
+    pa.add_argument("--speed", type=int, default=150)
+    pa.add_argument("--out", default="clips/attract.wav")
+
     pp = sub.add_parser("play")
     common(pp)
     pp.add_argument("file")
@@ -742,6 +751,22 @@ def main(argv=None) -> int:
         return 0
     if args.cmd == "run":
         return asyncio.run(cmd_run(args))
+    if args.cmd == "attract":
+        if args.from_wav:
+            sr, samples = wd.load_wav_file(args.from_wav)
+        else:
+            out = subprocess.run(["espeak-ng", "-v", args.voice, "-s", str(args.speed), "--stdout", "--stdin"],
+                                 input=args.text.encode(), capture_output=True)
+            if out.returncode != 0:
+                print("espeak-ng failed", file=sys.stderr); return 2
+            sr, samples = wd.parse_wav_bytes(out.stdout)
+        pcm8k = wd.resample(samples, sr, SR)
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        with wave.open(args.out, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(SR)
+            wf.writeframes(pcm8k.astype("<i2").tobytes())
+        print(f"wrote {args.out}  ({len(pcm8k)/SR:.1f}s, 8 kHz mono 16-bit)")
+        return 0
     if args.cmd == "play":
         return asyncio.run(cmd_play(args))
     return 2
