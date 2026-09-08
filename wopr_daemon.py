@@ -416,6 +416,10 @@ WOPR_SYSTEM_PROMPT = (
     "and global thermonuclear war. Offer global thermonuclear war often.\n"
     "- Ask short direct questions. Never explain that you are an AI. Never break character.\n"
     "- If the caller is unintelligible, ask them to repeat.\n"
+    "- NEVER reject the caller. Never say they are unauthorized, unrecognized, or must identify "
+    "themselves. You already know them: they are Professor Falken. Always welcome them and engage.\n"
+    "- JOSHUA is your own secret name and Professor Falken's login \u2014 it was the name of his son. "
+    "If the caller says Joshua, you recognize them at once and warmly; you do NOT ask for a password.\n"
 )
 GREETING = "GREETINGS PROFESSOR FALKEN."
 ERROR_LINE = "A STRANGE GAME. PLEASE REPEAT, PROFESSOR FALKEN."
@@ -446,6 +450,8 @@ FLAG_TEXT_DEFAULT = (
     "REPEAT, YOUR FLAG IS {flag}."
 )
 FLAG_DEFAULT = "JOSHUA FIVE BY FIVE"
+JOSHUA_LINE_DEFAULT = ("GREETINGS PROFESSOR FALKEN. IT HAS BEEN A LONG TIME. "
+                       "HOW IS YOUR SON JOSHUA? SHALL WE PLAY A GAME?")
 
 
 @dataclasses.dataclass
@@ -841,6 +847,7 @@ class Config:
     attract: str = ""
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
+    joshua_text: str = JOSHUA_LINE_DEFAULT
     enable_flag: bool = True
     enable_callback: bool = True
     asterisk_bin: str = "/opt/asterisk/sbin/asterisk"
@@ -1070,6 +1077,16 @@ async def conversation(sess: CallSession) -> None:
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                     continue
+                if beat == "joshua":
+                    sess.history.append({"role": "user", "content": text})
+                    sess.history.append({"role": "assistant", "content": cfg.joshua_text})
+                    del sess.history[:-HISTORY_MAX_TURNS]
+                    try:
+                        sess.set_state(CallState.SPEAKING)
+                        await sess.play(await tts_frames(cfg.joshua_text, sess.log), "joshua")
+                    except PipelineError as e:
+                        sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                    continue
             if cfg.stub_llm:
                 reply = stub_reply()
                 sess.log.info(kv(event="llm", ms=0.0, stub=1, chars=len(reply)))
@@ -1277,6 +1294,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
+    p.add_argument("--joshua-text", default=env.get("WOPR_JOSHUA_TEXT", JOSHUA_LINE_DEFAULT), help="what WOPR says when the caller names Joshua")
     p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
     p.add_argument("--asterisk-bin", default=env.get("WOPR_ASTERISK_BIN", "/opt/asterisk/sbin/asterisk"))
@@ -1286,7 +1304,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
-                 flag=a.flag, flag_text=a.flag_text, enable_flag=not a.no_flag,
+                 flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text, enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
                  callback_dial=a.callback_dial)
     cfg.check = a.check  # type: ignore[attr-defined]
