@@ -109,8 +109,8 @@ OUTBOUND_QUEUE_FRAMES = 1500  # 30 s of audio; producers block beyond this
 FRAME_PERIOD_S = 0.020
 # Callback: if the caller hangs up mid-thermonuclear-war, WOPR rings the payphone back.
 CALLBACK_UUID = uuid.UUID("ca11bac0-0000-4000-8000-000000000000").bytes   # sentinel = 'this is a callback'
-CALLBACK_DELAY_S = 20         # dramatic pause before the phone rings
-CALLBACK_COOLDOWN_S = 90      # min seconds between callbacks (runaway guard)
+CALLBACK_DELAY_S = 8          # default dramatic pause before the phone rings (override WOPR_CALLBACK_DELAY)
+CALLBACK_COOLDOWN_S = 60      # default min seconds between callbacks (override WOPR_CALLBACK_COOLDOWN)
 ATTRACT_GAIN = 0.6            # level of the armed-state attract loop (music/message) vs full scale;
                              # kept below 1.0 so handset sidetone doesn't swamp whistle detection
 
@@ -851,7 +851,9 @@ class Config:
     enable_flag: bool = True
     enable_callback: bool = True
     asterisk_bin: str = "/opt/asterisk/sbin/asterisk"
-    callback_dial: str = "PJSIP/payphone extension 2605@payphone"      # skip Whisper entirely (detector-only harness runs)
+    callback_dial: str = "PJSIP/payphone extension 2605@payphone"
+    callback_delay: float = CALLBACK_DELAY_S
+    callback_cooldown: float = CALLBACK_COOLDOWN_S      # skip Whisper entirely (detector-only harness runs)
 
 
 _WINK_FRAMES: list[bytes] | None = None
@@ -1163,19 +1165,19 @@ def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
     if not cfg.enable_callback or not sess.played_gtw or sess.is_callback:
         return
     now = time.monotonic()
-    if now - _last_callback_ts < CALLBACK_COOLDOWN_S:
+    if now - _last_callback_ts < cfg.callback_cooldown:
         sess.log.info(kv(event="callback_skipped", reason="cooldown"))
         return
     _last_callback_ts = now
     t = asyncio.create_task(_do_callback(cfg, sess.call_hex))
     _pending_callbacks.add(t)
     t.add_done_callback(_pending_callbacks.discard)
-    sess.log.info(kv(event="callback_scheduled", delay_s=CALLBACK_DELAY_S, dial=cfg.callback_dial))
+    sess.log.info(kv(event="callback_scheduled", delay_s=cfg.callback_delay, dial=cfg.callback_dial))
 
 
 async def _do_callback(cfg: Config, after_call: str) -> None:
     log = get_logger(after_call)
-    await asyncio.sleep(CALLBACK_DELAY_S)
+    await asyncio.sleep(cfg.callback_delay)
     log.info(kv(event="callback_dialing", target=cfg.callback_dial))
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -1299,6 +1301,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
     p.add_argument("--asterisk-bin", default=env.get("WOPR_ASTERISK_BIN", "/opt/asterisk/sbin/asterisk"))
     p.add_argument("--callback-dial", default=env.get("WOPR_CALLBACK_DIAL", "PJSIP/payphone extension 2605@payphone"))
+    p.add_argument("--callback-delay", type=float, default=float(env.get("WOPR_CALLBACK_DELAY", CALLBACK_DELAY_S)))
+    p.add_argument("--callback-cooldown", type=float, default=float(env.get("WOPR_CALLBACK_COOLDOWN", CALLBACK_COOLDOWN_S)))
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
@@ -1306,7 +1310,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
                  flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text, enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
-                 callback_dial=a.callback_dial)
+                 callback_dial=a.callback_dial, callback_delay=a.callback_delay,
+                 callback_cooldown=a.callback_cooldown)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
