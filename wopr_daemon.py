@@ -425,6 +425,46 @@ STUB_LINES = [
     "WHAT SIDE DO YOU WANT? YOU MAY HAVE THE UNITED STATES OR THE SOVIET UNION.",
 ]
 
+# --- Movie quest: the caller re-enacts WarGames to earn the flag ---------------------------------
+# Regexes are deliberately tolerant: local STT mangles proper nouns and fast speech
+# ("Joshua" -> "Noshua"), so each beat accepts common mishears. Joshua and the winning-move
+# line are the meaningful gates; play/game and nuclear are easy because WOPR steers there anyway.
+MOVIE_BEATS = {
+    "joshua":                    re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I),
+    "play_game":                 re.compile(r"\b(play|game)\b", re.I),
+    "global_thermonuclear_war":  re.compile(r"\b(thermo\s*nuclear|nuclear|therb a nuclear)\b", re.I),
+    "winning_move":              re.compile(r"\b(winning move|winning|not to play)\b", re.I),
+}
+# What WOPR speaks when all beats are hit. {flag} is substituted. Author-controlled via WOPR_FLAG_TEXT.
+FLAG_TEXT_DEFAULT = (
+    "A STRANGE GAME. THE ONLY WINNING MOVE IS NOT TO PLAY. "
+    "ACCESS GRANTED, PROFESSOR FALKEN. YOUR FLAG IS {flag}. "
+    "REPEAT, YOUR FLAG IS {flag}."
+)
+FLAG_DEFAULT = "JOSHUA FIVE BY FIVE"
+
+
+@dataclasses.dataclass
+class MovieQuest:
+    hit: set = dataclasses.field(default_factory=set)
+    unlocked: bool = False
+
+    def update(self, text: str) -> str | None:
+        """Feed one caller utterance. Returns the name of a newly-hit beat, or None."""
+        newly = None
+        for name, rx in MOVIE_BEATS.items():
+            if name not in self.hit and rx.search(text or ""):
+                self.hit.add(name)
+                newly = name
+        if len(self.hit) == len(MOVIE_BEATS):
+            self.unlocked = True
+        return newly
+
+    @property
+    def progress(self) -> str:
+        return f"{len(self.hit)}/{len(MOVIE_BEATS)}"
+
+
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _MD_RE = re.compile(r"[*_`#>\[\]()~|]")
 _EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
@@ -794,7 +834,10 @@ class Config:
     whisper_model: str = DEFAULTS["whisper_model"]
     stats_port: int = 0
     no_stt: bool = False
-    attract: str = ""      # skip Whisper entirely (detector-only harness runs)
+    attract: str = ""
+    flag: str = FLAG_DEFAULT
+    flag_text: str = FLAG_TEXT_DEFAULT
+    enable_flag: bool = True      # skip Whisper entirely (detector-only harness runs)
 
 
 _WINK_FRAMES: list[bytes] | None = None
@@ -838,6 +881,7 @@ class CallSession:
         self.turns = 0
         self.windows_in = 0
         self.attract_idx = 0
+        self.quest = MovieQuest()
         self.closed = False
 
     # --- state ---------------------------------------------------------------------------
@@ -997,6 +1041,24 @@ async def conversation(sess: CallSession) -> None:
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
+            if cfg.enable_flag and not sess.quest.unlocked:
+                beat = sess.quest.update(text)
+                if beat:
+                    sess.log.info(kv(event="quest", beat=beat, progress=sess.quest.progress))
+                if sess.quest.unlocked:
+                    reveal = cfg.flag_text.replace("{flag}", cfg.flag)
+                    sess.log.info(kv(event="flag_unlocked", flag=cfg.flag))
+                    sess.history.append({"role": "user", "content": text})
+                    sess.history.append({"role": "assistant", "content": reveal})
+                    del sess.history[:-HISTORY_MAX_TURNS]
+                    try:
+                        frames = await tts_frames(reveal, sess.log)
+                        sess.set_state(CallState.SPEAKING)
+                        await sess.play(wink_frames(), "flag_fanfare")
+                        await sess.play(frames, "flag")
+                    except PipelineError as e:
+                        sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                    continue
             if cfg.stub_llm:
                 reply = stub_reply()
                 sess.log.info(kv(event="llm", ms=0.0, stub=1, chars=len(reply)))
@@ -1033,6 +1095,7 @@ async def brain_task(sess: CallSession) -> None:
         dropped = sess.drain()
         if sess.state is not CallState.ARMED:
             sess.history.clear()
+            sess.quest = MovieQuest()
             sess.log.info(kv(event="bargein", dropped_frames=dropped, gen=sess.playback_gen))
         conv = asyncio.create_task(conversation(sess), name=f"conv-{sess.call_hex}-{sess.playback_gen}")
         waiter = asyncio.create_task(sess.detected_evt.wait(), name=f"bargewait-{sess.call_hex}")
@@ -1159,11 +1222,15 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--stats-port", type=int, default=int(env.get("WOPR_STATS_PORT", "0")))
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
+    p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
+    p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
+    p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
-                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract)
+                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
+                 flag=a.flag, flag_text=a.flag_text, enable_flag=not a.no_flag)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 

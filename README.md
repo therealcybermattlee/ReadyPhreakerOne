@@ -163,6 +163,31 @@ Knobs, all at the top of `wopr_daemon.py` (printed as `event=config` at startup)
 - `LLM_NUM_PREDICT`, `MAX_REPLY_CHARS` — reply length. `WOPR_MODEL=llama3.1:8b` in `wopr.env` is the
   documented alternative (`ollama pull` it first).
 
+## Movie-quest flag (easter egg)
+
+WOPR gives up a secret **flag** if the caller re-enacts WarGames over the course of a call. Four
+beats, in any order, tracked in code (not by the LLM, so the secret never leaks or fires early):
+
+1. name the backdoor — say **Joshua**
+2. ask to **play a game**
+3. choose **global thermonuclear war**
+4. deliver the lesson — **"the only winning move is not to play"**
+
+On the fourth, WOPR plays a fanfare and speaks the flag (default `JOSHUA FIVE BY FIVE`). The beat
+regexes are tolerant of local-STT mishears (e.g. "Joshua" → "Noshua"); Joshua and the winning-move
+line are the real gates. Every beat logs `event=quest beat=… progress=n/4`, and the reveal logs
+`event=flag_unlocked flag=…`.
+
+Customize in `/opt/wopr/wopr.env`:
+
+```
+WOPR_FLAG=YOUR-CTF-TOKEN-HERE          # what WOPR speaks/logs on completion
+WOPR_FLAG_TEXT=... {flag} ...          # the reveal line ({flag} is substituted)
+WOPR_NO_FLAG=1                         # disable the quest entirely
+```
+
+A second whistle (barge-in) resets the quest along with the conversation.
+
 ## Attract loop (waiting audio)
 
 While the line is armed and waiting for the whistle, the daemon can loop an audio file to the

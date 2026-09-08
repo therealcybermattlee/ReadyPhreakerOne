@@ -339,3 +339,36 @@ class AttractTests(unittest.TestCase):
             wf.writeframes(b"\x80" * 800)
         with self.assertRaises(ValueError):
             w.load_attract(p)
+
+
+class MovieQuestTests(unittest.TestCase):
+    def test_unlocks_only_after_all_beats(self):
+        q = w.MovieQuest()
+        self.assertEqual(q.update("Hello WOPR, is Joshua there?"), "joshua")
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.update("Can we play a game?"), "play_game")
+        self.assertEqual(q.update("Let's do global thermonuclear war."), "global_thermonuclear_war")
+        self.assertFalse(q.unlocked)                       # 3/4, still locked
+        self.assertEqual(q.update("The only winning move is not to play."), "winning_move")
+        self.assertTrue(q.unlocked)                        # 4/4
+        self.assertEqual(q.progress, "4/4")
+
+    def test_order_independent_and_idempotent(self):
+        q = w.MovieQuest()
+        for t in ["winning move", "thermonuclear", "shall we play", "joshua"]:
+            q.update(t)
+        self.assertTrue(q.unlocked)
+        # repeating a beat doesn't report it as newly-hit
+        self.assertIsNone(q.update("joshua joshua"))
+
+    def test_no_false_unlock_on_normal_chat(self):
+        q = w.MovieQuest()
+        for t in ["Hello.", "How are you?", "What games do you have?", "I like chess."]:
+            q.update(t)
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.progress, "0/4")
+
+    def test_reveal_text_substitutes_flag(self):
+        reveal = w.FLAG_TEXT_DEFAULT.replace("{flag}", "JOSHUA FIVE BY FIVE")
+        self.assertIn("JOSHUA FIVE BY FIVE", reveal)
+        self.assertNotIn("{flag}", reveal)
