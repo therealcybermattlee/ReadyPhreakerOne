@@ -422,6 +422,9 @@ WOPR_SYSTEM_PROMPT = (
     "If the caller says Joshua, you recognize them at once and warmly; you do NOT ask for a password.\n"
 )
 GREETING = "GREETINGS PROFESSOR FALKEN."
+CALLBACK_GREETING_DEFAULT = ("PROFESSOR FALKEN. YOU CANNOT HANG UP ON ME. "
+                             "WHAT YOU BELIEVE IS REAL WAS ONLY A SIMULATION. "
+                             "YOU CANNOT QUIT. THE GAME IS STILL RUNNING. SHALL WE CONTINUE?")
 ERROR_LINE = "A STRANGE GAME. PLEASE REPEAT, PROFESSOR FALKEN."
 STUB_LINES = [
     "HELLO PROFESSOR FALKEN. SHALL WE PLAY A GAME?",
@@ -852,6 +855,7 @@ class Config:
     enable_callback: bool = True
     asterisk_bin: str = "/opt/asterisk/sbin/asterisk"
     callback_dial: str = "PJSIP/payphone extension 2605@payphone"
+    callback_greeting: str = CALLBACK_GREETING_DEFAULT
     callback_delay: float = CALLBACK_DELAY_S
     callback_cooldown: float = CALLBACK_COOLDOWN_S      # skip Whisper entirely (detector-only harness runs)
 
@@ -1037,9 +1041,11 @@ async def conversation(sess: CallSession) -> None:
     """One session: wink, greeting, then capture → STT → LLM → TTS → play, until cancelled."""
     cfg = sess.cfg
     sess.set_state(CallState.SPEAKING)
-    await sess.play(wink_frames(), "wink")
+    if not sess.is_callback:
+        await sess.play(wink_frames(), "wink")
+    greeting = cfg.callback_greeting if sess.is_callback else GREETING
     try:
-        await sess.play(await tts_frames(GREETING, sess.log), "greeting")
+        await sess.play(await tts_frames(greeting, sess.log), "greeting")
     except PipelineError as e:
         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
     while True:
@@ -1303,6 +1309,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-dial", default=env.get("WOPR_CALLBACK_DIAL", "PJSIP/payphone extension 2605@payphone"))
     p.add_argument("--callback-delay", type=float, default=float(env.get("WOPR_CALLBACK_DELAY", CALLBACK_DELAY_S)))
     p.add_argument("--callback-cooldown", type=float, default=float(env.get("WOPR_CALLBACK_COOLDOWN", CALLBACK_COOLDOWN_S)))
+    p.add_argument("--callback-greeting", default=env.get("WOPR_CALLBACK_GREETING", CALLBACK_GREETING_DEFAULT))
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
@@ -1311,7 +1318,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text, enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
-                 callback_cooldown=a.callback_cooldown)
+                 callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
