@@ -431,3 +431,45 @@ class FreqEstimateTests(unittest.TestCase):
     def test_nan_on_tiny_input(self):
         import math
         self.assertTrue(math.isnan(w.estimate_peak_hz(np.zeros(16))))
+
+
+class QuestCarryoverTests(unittest.TestCase):
+    """A caller who hangs up mid-quest resumes their progress on the callback and can finish."""
+
+    def test_callback_resumes_and_finishes(self):
+        import asyncio
+
+        async def scenario():
+            class _W:
+                def get_extra_info(self, k): return None
+                def write(self, b): pass
+                async def drain(self): pass
+                def close(self): pass
+            # caller had Joshua + play + thermonuclear war (3/4), then hung up -> pending handed over
+            w._pending_quest = {"joshua", "play_game", "global_thermonuclear_war"}
+            sess = w.CallSession(w.CALLBACK_UUID, None, _W(), w.Config())      # a sim callback
+            self.assertEqual(sess.callback_kind, "sim")
+            self.assertEqual(sess.quest.hit, {"joshua", "play_game", "global_thermonuclear_war"})
+            self.assertEqual(w._pending_quest, set(), "pending should be consumed once")
+            self.assertFalse(sess.quest.unlocked)                             # 3/4, not yet
+            sess.quest.update("the only winning move is not to play")         # the last line
+            self.assertTrue(sess.quest.unlocked)                             # flag on the callback
+
+        asyncio.run(scenario())
+
+    def test_normal_inbound_does_not_resume(self):
+        import asyncio
+
+        async def scenario():
+            class _W:
+                def get_extra_info(self, k): return None
+                def write(self, b): pass
+                async def drain(self): pass
+                def close(self): pass
+            w._pending_quest = {"joshua", "play_game", "global_thermonuclear_war"}
+            sess = w.CallSession(b"\x22" * 16, None, _W(), w.Config())        # a fresh inbound call
+            self.assertIsNone(sess.callback_kind)
+            self.assertEqual(sess.quest.hit, set(), "inbound starts fresh")
+            w._pending_quest = set()
+
+        asyncio.run(scenario())

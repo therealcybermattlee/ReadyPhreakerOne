@@ -226,6 +226,8 @@ carries a sentinel UUID so the daemon knows to drop the answerer straight into W
 needed. A cooldown (`CALLBACK_COOLDOWN_S`, default 90 s) prevents runaway loops, and a call that
 is itself a callback never schedules another.
 
+If the caller hung up mid-quest (chose thermonuclear war but hadn't finished the flag), the callback **resumes their progress** — they can complete the flag by delivering the final line when WOPR rings back, instead of starting over.
+
 Requires the `2605` dialplan extension (in `deploy/asterisk/extensions.conf`). Disable with
 `WOPR_NO_CALLBACK=1`; point it elsewhere with `WOPR_CALLBACK_DIAL` / `WOPR_ASTERISK_BIN`.
 Log events: `callback_scheduled`, `callback_dialing`, `callback_result`, `callback_answered`.

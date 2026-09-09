@@ -951,6 +951,14 @@ class CallSession:
         self.callback_kind = ("win" if call_id == CALLBACK_WIN_UUID
                                else "sim" if call_id == CALLBACK_UUID else None)
         self.is_callback = self.callback_kind is not None
+        # A callback resumes the quest progress the caller had when they hung up, so someone who
+        # was one line short of the flag can finish it when WOPR rings back.
+        global _pending_quest
+        if self.is_callback and _pending_quest:
+            self.quest.hit = set(_pending_quest)
+            self.log.info(kv(event="quest_resumed", beats=len(self.quest.hit),
+                             have=",".join(sorted(self.quest.hit))))
+            _pending_quest = set()
         self.played_gtw = False
         self.closed = False
 
@@ -1284,12 +1292,14 @@ async def brain_task(sess: CallSession) -> None:
 
 _pending_callbacks: set = set()
 _last_callback_ts: float = 0.0
+_pending_quest: set = set()   # quest beats to hand the next callback so the caller can finish the flag
 
 
 def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
     """After the caller hangs up, ring the payphone back — taunting them if they had won, or
-    telling them it was a simulation if they only started thermonuclear war. Once, with a cooldown."""
-    global _last_callback_ts
+    telling them it was a simulation if they only started thermonuclear war. Once, with a cooldown.
+    The caller's quest progress is carried to the callback so they can finish an unfinished flag."""
+    global _last_callback_ts, _pending_quest
     if not cfg.enable_callback or sess.is_callback:
         return
     if sess.quest.unlocked:
@@ -1303,6 +1313,7 @@ def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
         sess.log.info(kv(event="callback_skipped", reason="cooldown", kind=kind))
         return
     _last_callback_ts = now
+    _pending_quest = set(sess.quest.hit)   # hand the callback whatever beats they had earned
     t = asyncio.create_task(_do_callback(cfg, dial, sess.call_hex, kind))
     _pending_callbacks.add(t)
     t.add_done_callback(_pending_callbacks.discard)
