@@ -66,48 +66,49 @@ def stat_line(name, values, unit="ms"):
 
 
 def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
+    # A "player" is one inbound call (someone lifting the payphone). Callbacks are WOPR-initiated
+    # follow-ups, not new players, so the study below is computed over inbound only.
     inbound = [s for s in sessions if not s.get("callback")]
     callbacks = [s for s in sessions if s.get("callback")]
     whistled = [s for s in inbound if s.get("whistled")]
-    won = [s for s in sessions if s.get("won")]
+    won = [s for s in inbound if s.get("won")]
     L = []
     L.append("=" * 66)
     L.append("  WOPR — HUMAN EXPERIMENT REPORT")
     L.append("=" * 66)
-    L.append(f"  Total calls:            {len(sessions)}")
-    L.append(f"    inbound:              {len(inbound)}")
-    L.append(f"    callbacks (WOPR rang):{len(callbacks)}  "
+    L.append(f"  Players (payphone lifted):  {len(inbound)}")
+    L.append(f"  WOPR callbacks (not players):{len(callbacks)}  "
              f"(sim={sum(1 for s in callbacks if s['callback']=='sim')}, "
              f"win={sum(1 for s in callbacks if s['callback']=='win')})")
     if inbound:
-        L.append(f"  Whistled to WOPR:       {len(whistled)}/{len(inbound)} "
-                 f"({100*len(whistled)/len(inbound):.0f}% of inbound)")
-    L.append(f"  Won the flag:           {len(won)}  "
-             f"({100*len(won)/max(len(sessions),1):.0f}% of all calls)")
+        L.append(f"  Whistled to WOPR:           {len(whistled)}/{len(inbound)} "
+                 f"({100*len(whistled)/len(inbound):.0f}%)")
+    L.append(f"  Won the flag:               {len(won)}/{len(inbound)}  "
+             f"({100*len(won)/max(len(inbound),1):.0f}% of players)")
     L.append("")
-    L.append("  FUNNEL (how far callers got)")
+    L.append("  FUNNEL (how far players got)")
     denom = len(inbound) or 1
     L.append(f"    lifted & whistled     {len(whistled):>4}  {100*len(whistled)/denom:5.0f}%")
     for b in BEATS:
-        c = sum(1 for s in sessions if b in (s.get("beats") or []))
+        c = sum(1 for s in inbound if b in (s.get("beats") or []))
         L.append(f"    {BEAT_LABEL[b]:<22}{c:>4}  {100*c/denom:5.0f}%")
     L.append(f"    WON (all four)        {len(won):>4}  {100*len(won)/denom:5.0f}%")
     L.append("")
-    L.append("  POINTS PER CALL (quest beats, 0–4)")
-    pts = Counter(s.get("points", 0) for s in sessions)
+    L.append("  POINTS PER PLAYER (quest beats, 0–4)")
+    pts = Counter(s.get("points", 0) for s in inbound)
     for p in range(5):
         bar = "#" * pts.get(p, 0)
         L.append(f"    {p} pts  {pts.get(p,0):>4}  {bar}")
     L.append("")
-    L.append("  TIMINGS")
+    L.append("  TIMINGS (players)")
     L.append(stat_line("Music heard before whistle", [s.get("attract_ms") for s in inbound], "s"))
-    L.append(stat_line("Whistle → first point", [s.get("first_point_after_whistle_ms") for s in sessions], "s"))
+    L.append(stat_line("Whistle → first point", [s.get("first_point_after_whistle_ms") for s in inbound], "s"))
     L.append(stat_line("Call start → win", [s.get("win_ms") for s in won], "s"))
-    L.append(stat_line("Call duration", [s.get("duration_ms") for s in sessions], "s"))
-    L.append(stat_line("Turns per call", [s.get("turns") for s in sessions], ""))
+    L.append(stat_line("Call duration", [s.get("duration_ms") for s in inbound], "s"))
+    L.append(stat_line("Turns per call", [s.get("turns") for s in inbound], ""))
     L.append("")
     L.append("  WHISTLE ACCURACY (measured pitch of the human whistle, target 2600 Hz)")
-    hzs = [s.get("whistle_hz") for s in sessions if s.get("whistle_hz") is not None]
+    hzs = [s.get("whistle_hz") for s in inbound if s.get("whistle_hz") is not None]
     if hzs:
         errs = [h - 2600 for h in hzs]
         L.append(f"    n={len(hzs)}   median {statistics.median(hzs):.0f} Hz   mean {statistics.mean(hzs):.0f} Hz"
@@ -121,8 +122,8 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
     else:
         L.append("    (no whistles measured yet)")
     L.append("")
-    L.append("  LEADERBOARD (top calls by composite score)")
-    ranked = sorted(sessions, key=score_call, reverse=True)[:10]
+    L.append("  LEADERBOARD (top players by composite score)")
+    ranked = sorted(inbound, key=score_call, reverse=True)[:10]
     L.append(f"    {'#':>2}  {'call':8}  {'score':>5}  {'pts':>3}  {'won':>3}  {'win_s':>5}  {'whistle':>8}")
     for i, s in enumerate(ranked, 1):
         wm = s.get("win_ms"); hz = s.get("whistle_hz")
@@ -130,7 +131,7 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
                  f"{'Y' if s.get('won') else '-':>3}  {(f'{wm/1000:.0f}' if wm else '-'):>5}  "
                  f"{(f'{hz:.0f}Hz' if hz else '-'):>8}")
     L.append("=" * 66)
-    summary = {"calls": len(sessions), "inbound": len(inbound), "callbacks": len(callbacks),
+    summary = {"players": len(inbound), "callbacks": len(callbacks),
                "whistled": len(whistled), "won": len(won)}
     return "\n".join(L), summary
 
@@ -186,7 +187,7 @@ def render_html(report_text: str, freqs: list[tuple[str, int]], summary: dict) -
         cloud = '<em>no caller speech yet</em>'
     cards = "".join(
         f'<div class="card"><div class="num">{v}</div><div class="lbl">{k}</div></div>'
-        for k, v in [("calls", summary["calls"]), ("whistled", summary["whistled"]),
+        for k, v in [("players", summary["players"]), ("whistled", summary["whistled"]),
                      ("won flag", summary["won"]), ("callbacks", summary["callbacks"])])
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>WOPR — Human Experiment Report</title>
