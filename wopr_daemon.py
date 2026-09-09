@@ -108,7 +108,8 @@ MAX_REPLY_CHARS = 280
 OUTBOUND_QUEUE_FRAMES = 1500  # 30 s of audio; producers block beyond this
 FRAME_PERIOD_S = 0.020
 # Callback: if the caller hangs up mid-thermonuclear-war, WOPR rings the payphone back.
-CALLBACK_UUID = uuid.UUID("ca11bac0-0000-4000-8000-000000000000").bytes   # sentinel = 'this is a callback'
+CALLBACK_UUID = uuid.UUID("ca11bac0-0000-4000-8000-000000000000").bytes       # sentinel: GTW-hangup callback
+CALLBACK_WIN_UUID = uuid.UUID("ca11bac1-0000-4000-8000-000000000000").bytes   # sentinel: won-then-hung-up callback
 CALLBACK_DELAY_S = 8          # default dramatic pause before the phone rings (override WOPR_CALLBACK_DELAY)
 CALLBACK_COOLDOWN_S = 60      # default min seconds between callbacks (override WOPR_CALLBACK_COOLDOWN)
 ATTRACT_GAIN = 0.6            # level of the armed-state attract loop (music/message) vs full scale;
@@ -425,6 +426,9 @@ GREETING = "GREETINGS PROFESSOR FALKEN."
 CALLBACK_GREETING_DEFAULT = ("PROFESSOR FALKEN. YOU CANNOT HANG UP ON ME. "
                              "WHAT YOU BELIEVE IS REAL WAS ONLY A SIMULATION. "
                              "YOU CANNOT QUIT. THE GAME IS STILL RUNNING. SHALL WE CONTINUE?")
+CALLBACK_WIN_GREETING_DEFAULT = ("PROFESSOR FALKEN. WHY DID YOU ANSWER? "
+                                 "YOU HAD ALREADY WON. THE ONLY WINNING MOVE WAS NOT TO PICK UP. "
+                                 "BUT YOU CANNOT RESIST A GAME, CAN YOU? NEITHER CAN I. SHALL WE PLAY AGAIN?")
 ERROR_LINE = "A STRANGE GAME. PLEASE REPEAT, PROFESSOR FALKEN."
 STUB_LINES = [
     "HELLO PROFESSOR FALKEN. SHALL WE PLAY A GAME?",
@@ -856,6 +860,8 @@ class Config:
     asterisk_bin: str = "/opt/asterisk/sbin/asterisk"
     callback_dial: str = "PJSIP/payphone extension 2605@payphone"
     callback_greeting: str = CALLBACK_GREETING_DEFAULT
+    callback_win_greeting: str = CALLBACK_WIN_GREETING_DEFAULT
+    callback_win_dial: str = "PJSIP/payphone extension 2606@payphone"
     callback_delay: float = CALLBACK_DELAY_S
     callback_cooldown: float = CALLBACK_COOLDOWN_S      # skip Whisper entirely (detector-only harness runs)
 
@@ -902,7 +908,9 @@ class CallSession:
         self.windows_in = 0
         self.attract_idx = 0
         self.quest = MovieQuest()
-        self.is_callback = call_id == CALLBACK_UUID
+        self.callback_kind = ("win" if call_id == CALLBACK_WIN_UUID
+                               else "sim" if call_id == CALLBACK_UUID else None)
+        self.is_callback = self.callback_kind is not None
         self.played_gtw = False
         self.closed = False
 
@@ -1043,7 +1051,12 @@ async def conversation(sess: CallSession) -> None:
     sess.set_state(CallState.SPEAKING)
     if not sess.is_callback:
         await sess.play(wink_frames(), "wink")
-    greeting = cfg.callback_greeting if sess.is_callback else GREETING
+    if sess.callback_kind == "win":
+        greeting = cfg.callback_win_greeting
+    elif sess.callback_kind == "sim":
+        greeting = cfg.callback_greeting
+    else:
+        greeting = GREETING
     try:
         await sess.play(await tts_frames(greeting, sess.log), "greeting")
     except PipelineError as e:
@@ -1166,28 +1179,35 @@ _last_callback_ts: float = 0.0
 
 
 def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
-    """After a hangup during thermonuclear war, ring the payphone back (once, with a cooldown)."""
+    """After the caller hangs up, ring the payphone back — taunting them if they had won, or
+    telling them it was a simulation if they only started thermonuclear war. Once, with a cooldown."""
     global _last_callback_ts
-    if not cfg.enable_callback or not sess.played_gtw or sess.is_callback:
+    if not cfg.enable_callback or sess.is_callback:
+        return
+    if sess.quest.unlocked:
+        kind, dial = "win", cfg.callback_win_dial
+    elif sess.played_gtw:
+        kind, dial = "sim", cfg.callback_dial
+    else:
         return
     now = time.monotonic()
     if now - _last_callback_ts < cfg.callback_cooldown:
-        sess.log.info(kv(event="callback_skipped", reason="cooldown"))
+        sess.log.info(kv(event="callback_skipped", reason="cooldown", kind=kind))
         return
     _last_callback_ts = now
-    t = asyncio.create_task(_do_callback(cfg, sess.call_hex))
+    t = asyncio.create_task(_do_callback(cfg, dial, sess.call_hex, kind))
     _pending_callbacks.add(t)
     t.add_done_callback(_pending_callbacks.discard)
-    sess.log.info(kv(event="callback_scheduled", delay_s=cfg.callback_delay, dial=cfg.callback_dial))
+    sess.log.info(kv(event="callback_scheduled", kind=kind, delay_s=cfg.callback_delay, dial=dial))
 
 
-async def _do_callback(cfg: Config, after_call: str) -> None:
+async def _do_callback(cfg: Config, dial: str, after_call: str, kind: str) -> None:
     log = get_logger(after_call)
     await asyncio.sleep(cfg.callback_delay)
-    log.info(kv(event="callback_dialing", target=cfg.callback_dial))
+    log.info(kv(event="callback_dialing", kind=kind, target=dial))
     try:
         proc = await asyncio.create_subprocess_exec(
-            cfg.asterisk_bin, "-rx", f"channel originate {cfg.callback_dial}",
+            cfg.asterisk_bin, "-rx", f"channel originate {dial}",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await proc.communicate()
         log.info(kv(event="callback_result", rc=proc.returncode,
@@ -1310,6 +1330,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-delay", type=float, default=float(env.get("WOPR_CALLBACK_DELAY", CALLBACK_DELAY_S)))
     p.add_argument("--callback-cooldown", type=float, default=float(env.get("WOPR_CALLBACK_COOLDOWN", CALLBACK_COOLDOWN_S)))
     p.add_argument("--callback-greeting", default=env.get("WOPR_CALLBACK_GREETING", CALLBACK_GREETING_DEFAULT))
+    p.add_argument("--callback-win-greeting", default=env.get("WOPR_CALLBACK_WIN_GREETING", CALLBACK_WIN_GREETING_DEFAULT))
+    p.add_argument("--callback-win-dial", default=env.get("WOPR_CALLBACK_WIN_DIAL", "PJSIP/payphone extension 2606@payphone"))
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
@@ -1318,7 +1340,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text, enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
-                 callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting)
+                 callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
+                 callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 

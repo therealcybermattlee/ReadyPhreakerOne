@@ -407,3 +407,15 @@ class WinningMoveParaphraseTests(unittest.TestCase):
         rx = w.MOVIE_BEATS["winning_move"]
         for t in ["how about a game of chess", "I want to win the war", "let's play"]:
             self.assertIsNone(rx.search(t), t)
+
+
+class WinCallbackTests(unittest.TestCase):
+    def test_two_distinct_sentinels(self):
+        import uuid
+        self.assertEqual(w.CALLBACK_WIN_UUID, uuid.UUID("ca11bac1-0000-4000-8000-000000000000").bytes)
+        self.assertNotEqual(w.CALLBACK_UUID, w.CALLBACK_WIN_UUID)
+
+    def test_config_has_win_greeting_and_dial(self):
+        c = w.Config()
+        self.assertIn("2606", c.callback_win_dial)
+        self.assertIn("WHY DID YOU ANSWER", c.callback_win_greeting)
