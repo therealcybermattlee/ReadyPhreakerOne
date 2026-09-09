@@ -482,6 +482,10 @@ FLAG_TEXT_DEFAULT = (
 FLAG_DEFAULT = "JOSHUA FIVE BY FIVE"
 JOSHUA_LINE_DEFAULT = ("GREETINGS PROFESSOR FALKEN. IT HAS BEEN A LONG TIME. "
                        "HOW IS YOUR SON JOSHUA? SHALL WE PLAY A GAME?")
+# The flag is read in a Johnny 5 (Short Circuit) voice — brighter and faster than WOPR's croak.
+FLAG_VOICE_DEFAULT = "en-us+m3"
+FLAG_SPEED_DEFAULT = 170
+FLAG_PITCH_DEFAULT = 70
 
 
 @dataclasses.dataclass
@@ -573,9 +577,11 @@ async def espeak_wav(text: str, voice: str = ESPEAK_VOICE, speed: int = ESPEAK_S
     return out
 
 
-async def tts_frames(text: str, log: CallLogger | None = None) -> list[bytes]:
+async def tts_frames(text: str, log: CallLogger | None = None, voice: str | None = None,
+                     speed: int | None = None, pitch: int | None = None) -> list[bytes]:
     with Stopwatch() as sw:
-        wav = await espeak_wav(text)
+        wav = await espeak_wav(text, voice=voice or ESPEAK_VOICE, speed=speed or ESPEAK_SPEED,
+                               pitch=pitch if pitch is not None else ESPEAK_PITCH)
         try:
             sr, samples = parse_wav_bytes(wav)
         except ValueError as e:
@@ -888,6 +894,9 @@ class Config:
     attract: str = ""
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
+    flag_voice: str = FLAG_VOICE_DEFAULT
+    flag_speed: int = FLAG_SPEED_DEFAULT
+    flag_pitch: int = FLAG_PITCH_DEFAULT
     joshua_text: str = JOSHUA_LINE_DEFAULT
     enable_flag: bool = True
     enable_callback: bool = True
@@ -1205,7 +1214,8 @@ async def conversation(sess: CallSession) -> None:
                     del sess.history[:-HISTORY_MAX_TURNS]
                     sess.record_turn(text, reveal, "flag")
                     try:
-                        frames = await tts_frames(reveal, sess.log)
+                        frames = await tts_frames(reveal, sess.log, voice=cfg.flag_voice,
+                                                  speed=cfg.flag_speed, pitch=cfg.flag_pitch)
                         sess.set_state(CallState.SPEAKING)
                         await sess.play(wink_frames(), "flag_fanfare")
                         await sess.play(frames, "flag")
@@ -1443,6 +1453,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
     p.add_argument("--joshua-text", default=env.get("WOPR_JOSHUA_TEXT", JOSHUA_LINE_DEFAULT), help="what WOPR says when the caller names Joshua")
+    p.add_argument("--flag-voice", default=env.get("WOPR_FLAG_VOICE", FLAG_VOICE_DEFAULT), help="espeak-ng voice for the flag reveal (Johnny 5)")
+    p.add_argument("--flag-speed", type=int, default=int(env.get("WOPR_FLAG_SPEED", FLAG_SPEED_DEFAULT)))
+    p.add_argument("--flag-pitch", type=int, default=int(env.get("WOPR_FLAG_PITCH", FLAG_PITCH_DEFAULT)))
     p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
     p.add_argument("--asterisk-bin", default=env.get("WOPR_ASTERISK_BIN", "/opt/asterisk/sbin/asterisk"))
@@ -1460,7 +1473,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
-                 flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text, enable_flag=not a.no_flag,
+                 flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
+                 flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
+                 enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
