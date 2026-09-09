@@ -105,6 +105,21 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
     L.append(stat_line("Call start → win", [s.get("win_ms") for s in won], "s"))
     L.append(stat_line("Call duration", [s.get("duration_ms") for s in sessions], "s"))
     L.append(stat_line("Turns per call", [s.get("turns") for s in sessions], ""))
+    L.append("")
+    L.append("  WHISTLE ACCURACY (measured pitch of the human whistle, target 2600 Hz)")
+    hzs = [s.get("whistle_hz") for s in sessions if s.get("whistle_hz") is not None]
+    if hzs:
+        errs = [h - 2600 for h in hzs]
+        L.append(f"    n={len(hzs)}   median {statistics.median(hzs):.0f} Hz   mean {statistics.mean(hzs):.0f} Hz"
+                 f"   range {min(hzs):.0f}–{max(hzs):.0f} Hz")
+        L.append(f"    mean error {statistics.mean(errs):+.0f} Hz   "
+                 f"mean |error| {statistics.mean(abs(e) for e in errs):.0f} Hz   "
+                 f"within ±25 Hz: {100*sum(1 for e in errs if abs(e)<=25)/len(errs):.0f}%")
+        buckets = Counter(int(round((h - 2600) / 50.0)) * 50 for h in hzs)
+        for b in sorted(buckets):
+            L.append(f"    {2600 + b:>4} Hz ({b:+4d})  {buckets[b]:>3}  {'#' * buckets[b]}")
+    else:
+        L.append("    (no whistles measured yet)")
     L.append("=" * 66)
     summary = {"calls": len(sessions), "inbound": len(inbound), "callbacks": len(callbacks),
                "whistled": len(whistled), "won": len(won)}

@@ -419,3 +419,15 @@ class WinCallbackTests(unittest.TestCase):
         c = w.Config()
         self.assertIn("2606", c.callback_win_dial)
         self.assertIn("WHY DID YOU ANSWER", c.callback_win_greeting)
+
+
+class FreqEstimateTests(unittest.TestCase):
+    def test_estimates_pitch_within_a_few_hz(self):
+        for hz in (2480, 2560, 2600, 2635, 2710):
+            x = w.synth_tone(hz, 300, 0.5)          # 300 ms, like the detector's hold window
+            est = w.estimate_peak_hz(x)
+            self.assertAlmostEqual(est, hz, delta=8, msg=f"{hz} -> {est:.1f}")
+
+    def test_nan_on_tiny_input(self):
+        import math
+        self.assertTrue(math.isnan(w.estimate_peak_hz(np.zeros(16))))

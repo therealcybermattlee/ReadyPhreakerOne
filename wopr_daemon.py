@@ -213,6 +213,29 @@ def rms(win: np.ndarray) -> float:
     return float(math.sqrt(np.mean(x * x))) if len(x) else 0.0
 
 
+def estimate_peak_hz(x: np.ndarray, sr: int = SAMPLE_RATE, lo: float = 2200.0,
+                     hi: float = 3000.0) -> float:
+    """Fine frequency of the dominant tone in [lo, hi] via a Hann-windowed FFT with parabolic
+    interpolation. On ~300 ms of audio the native bin is ~3 Hz, so a human whistle's actual pitch
+    is measured to a few Hz — enough to study how far real whistles land from 2600."""
+    x = np.asarray(x, dtype=np.float64)
+    if len(x) < 128:
+        return float("nan")
+    spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+    freqs = np.fft.rfftfreq(len(x), 1.0 / sr)
+    band = (freqs >= lo) & (freqs <= hi)
+    if not band.any():
+        return float("nan")
+    idx = int(np.argmax(np.where(band, spec, 0.0)))
+    delta = 0.0
+    if 1 <= idx < len(spec) - 1:
+        a, b, c = spec[idx - 1], spec[idx], spec[idx + 1]
+        denom = a - 2 * b + c
+        if denom != 0:
+            delta = float(np.clip(0.5 * (a - c) / denom, -0.5, 0.5))
+    return float((idx + delta) * sr / len(x))
+
+
 def synth_tone(hz: float, ms: float, amplitude: float = 0.5, sr: int = SAMPLE_RATE,
                phase: float = 0.0) -> np.ndarray:
     """int16 sine of `ms` milliseconds at `amplitude` × full scale."""
@@ -912,6 +935,9 @@ class CallSession:
         self.t_first_detect_ms: float | None = None   # ms from call start to first whistle
         self.t_first_point_ms: float | None = None    # ms from call start to first quest beat
         self.t_win_ms: float | None = None            # ms from call start to flag unlock
+        self.recent_windows: collections.deque = collections.deque(maxlen=HOLD_WINDOWS + 5)
+        self.whistle_hz: float | None = None          # measured pitch of the first whistle
+        self.whistle_hzs: list[float] = []            # every detected whistle's pitch
         self.quest = MovieQuest()
         self.callback_kind = ("win" if call_id == CALLBACK_WIN_UUID
                                else "sim" if call_id == CALLBACK_UUID else None)
@@ -965,6 +991,9 @@ class CallSession:
                                              if self.t_first_point_ms is not None and self.t_first_detect_ms is not None
                                              else None),
             "win_ms": round(self.t_win_ms) if self.t_win_ms is not None else None,
+            "whistle_hz": round(self.whistle_hz, 1) if self.whistle_hz is not None else None,
+            "whistle_hz_err": (round(self.whistle_hz - 2600.0, 1) if self.whistle_hz is not None else None),
+            "whistle_hzs": [round(h, 1) for h in self.whistle_hzs],
             "turns": self.turns, "played_gtw": self.played_gtw, "reason": reason,
         }
 
@@ -983,6 +1012,7 @@ class CallSession:
     # --- audio in --------------------------------------------------------------------------
     def process_inbound_window(self, win: np.ndarray) -> None:
         self.windows_in += 1
+        self.recent_windows.append(win)
         masked = any(self.echo_ring)
         fired = self.detector.update(win, masked)
         if self.log.logger.isEnabledFor(logging.DEBUG):
@@ -990,9 +1020,14 @@ class CallSession:
             self.log.debug(kv(event="window", ratio=d.last_ratio, e26=d.last_e26, purity=d.last_purity,
                               pass_=int(window_passes(win)[0]), masked=int(masked), run=d.run))
         if fired:
+            hz = estimate_peak_hz(np.concatenate(list(self.recent_windows)[-HOLD_WINDOWS:]))
+            if not math.isnan(hz):
+                self.whistle_hzs.append(hz)
+                if self.whistle_hz is None:
+                    self.whistle_hz = hz
             self.log.info(kv(event="detect", ratio=self.detector.last_ratio, e26=self.detector.last_e26,
-                             purity=self.detector.last_purity, run=HOLD_WINDOWS, t_ms=self.elapsed_ms(),
-                             n=self.detector.fires))
+                             purity=self.detector.last_purity, hz=round(hz, 1), run=HOLD_WINDOWS,
+                             t_ms=self.elapsed_ms(), n=self.detector.fires))
             if self.t_first_detect_ms is None:
                 self.t_first_detect_ms = self.elapsed_ms()
             self.detected_evt.set()
