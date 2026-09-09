@@ -202,6 +202,21 @@ Every call is recorded and every turn is logged to a dataset, with no announceme
 Sizing for a 2-day, few-hundred-call event: roughly 1–3 GB of audio plus negligible text. The
 mini has ~265 GB free, so no external drive is needed; copy the folders off afterward for backup.
 
+## Analysis engine (the human experiment)
+
+The daemon writes a per-call metrics record to `WOPR_SESSIONS` (JSONL): whistle time, points
+(quest beats), first-point timing, win time, turns, callback kind. `analyze.py` aggregates the
+metrics + transcripts into a report and an HTML page with a word cloud of what callers said:
+
+```
+python analyze.py --sessions /opt/wopr/transcripts/sessions.jsonl \
+                  --transcript /opt/wopr/transcripts/dataset.jsonl --html report.html
+```
+
+Reports: call funnel (whistled → each beat → won), points-per-call distribution, and timing
+stats for "music heard before whistle", "whistle → first point", "call start → win", duration,
+and turns. The HTML adds a WOPR-green word cloud of caller speech. Stdlib only.
+
 ## WOPR calls back
 
 If the caller chooses **global thermonuclear war** and then hangs up, WOPR rings the payphone

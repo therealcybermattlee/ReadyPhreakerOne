@@ -852,6 +852,7 @@ class Config:
     stats_port: int = 0
     no_stt: bool = False
     transcript: str = ""
+    sessions: str = ""
     attract: str = ""
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
@@ -908,6 +909,9 @@ class CallSession:
         self.turns = 0
         self.windows_in = 0
         self.attract_idx = 0
+        self.t_first_detect_ms: float | None = None   # ms from call start to first whistle
+        self.t_first_point_ms: float | None = None    # ms from call start to first quest beat
+        self.t_win_ms: float | None = None            # ms from call start to flag unlock
         self.quest = MovieQuest()
         self.callback_kind = ("win" if call_id == CALLBACK_WIN_UUID
                                else "sim" if call_id == CALLBACK_UUID else None)
@@ -943,6 +947,39 @@ class CallSession:
         except OSError as e:
             self.log.warning(kv(event="transcript_failed", err=f"{type(e).__name__}: {e}"[:120]))
 
+    def metrics(self, reason: str) -> dict:
+        """Per-call summary for the data study."""
+        return {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "call": self.call_hex, "callback": self.callback_kind,
+            "duration_ms": round(self.elapsed_ms()),
+            "whistled": self.t_first_detect_ms is not None,
+            "attract_ms": None if self.callback_kind else (round(self.t_first_detect_ms)
+                                                           if self.t_first_detect_ms is not None else None),
+            "whistles": self.detector.fires,          # first whistle + any barge-ins
+            "points": len(self.quest.hit),
+            "beats": sorted(self.quest.hit),
+            "won": self.quest.unlocked,
+            "first_point_ms": round(self.t_first_point_ms) if self.t_first_point_ms is not None else None,
+            "first_point_after_whistle_ms": (round(self.t_first_point_ms - self.t_first_detect_ms)
+                                             if self.t_first_point_ms is not None and self.t_first_detect_ms is not None
+                                             else None),
+            "win_ms": round(self.t_win_ms) if self.t_win_ms is not None else None,
+            "turns": self.turns, "played_gtw": self.played_gtw, "reason": reason,
+        }
+
+    def write_session(self, reason: str) -> None:
+        m = self.metrics(reason)
+        self.log.info(kv(event="call_metrics", points=m["points"], whistled=int(m["whistled"]),
+                         attract_ms=m["attract_ms"], won=int(m["won"]), turns=m["turns"]))
+        if not self.cfg.sessions:
+            return
+        try:
+            with open(self.cfg.sessions, "a", encoding="utf-8") as f:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+        except OSError as e:
+            self.log.warning(kv(event="sessions_failed", err=f"{type(e).__name__}: {e}"[:120]))
+
     # --- audio in --------------------------------------------------------------------------
     def process_inbound_window(self, win: np.ndarray) -> None:
         self.windows_in += 1
@@ -956,6 +993,8 @@ class CallSession:
             self.log.info(kv(event="detect", ratio=self.detector.last_ratio, e26=self.detector.last_e26,
                              purity=self.detector.last_purity, run=HOLD_WINDOWS, t_ms=self.elapsed_ms(),
                              n=self.detector.fires))
+            if self.t_first_detect_ms is None:
+                self.t_first_detect_ms = self.elapsed_ms()
             self.detected_evt.set()
         if self.state is CallState.CAPTURING and not masked:
             utt = self.vad.update(win)
@@ -1101,8 +1140,12 @@ async def conversation(sess: CallSession) -> None:
             if cfg.enable_flag and not sess.quest.unlocked:
                 beat = sess.quest.update(text)
                 if beat:
+                    if sess.t_first_point_ms is None:
+                        sess.t_first_point_ms = sess.elapsed_ms()
                     sess.log.info(kv(event="quest", beat=beat, progress=sess.quest.progress))
                 if sess.quest.unlocked:
+                    if sess.t_win_ms is None:
+                        sess.t_win_ms = sess.elapsed_ms()
                     reveal = cfg.flag_text.replace("{flag}", cfg.flag)
                     sess.log.info(kv(event="flag_unlocked", flag=cfg.flag))
                     sess.history.append({"role": "user", "content": text})
@@ -1278,6 +1321,7 @@ async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             pass
         sess.log.info(kv(event="call_end", reason=reason, dur_ms=sess.elapsed_ms(), turns=sess.turns,
                          detects=sess.detector.fires, windows=sess.windows_in))
+        sess.write_session(reason)
         maybe_schedule_callback(sess, cfg)
 
 
@@ -1354,6 +1398,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-win-greeting", default=env.get("WOPR_CALLBACK_WIN_GREETING", CALLBACK_WIN_GREETING_DEFAULT))
     p.add_argument("--callback-win-dial", default=env.get("WOPR_CALLBACK_WIN_DIAL", "PJSIP/payphone extension 2606@payphone"))
     p.add_argument("--transcript", default=env.get("WOPR_TRANSCRIPT", ""), help="append caller/WOPR turn pairs as JSONL to this file (dataset)")
+    p.add_argument("--sessions", default=env.get("WOPR_SESSIONS", ""), help="append one per-call metrics record as JSONL to this file")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
@@ -1364,7 +1409,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
                  callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,
-                 transcript=a.transcript)
+                 transcript=a.transcript, sessions=a.sessions)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
