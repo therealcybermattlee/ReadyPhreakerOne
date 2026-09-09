@@ -270,7 +270,8 @@ def resample(x: np.ndarray, src_sr: int, dst_sr: int, cutoff_hz: float | None = 
     return np.clip(np.rint(z), -32768, 32767).astype("<i2") if was_int else z.astype(np.float32)
 
 
-ATTRACT_FRAMES: list[bytes] | None = None   # armed-state loop, loaded at startup from --attract
+ATTRACT_FRAMES: list[bytes] | None = None     # armed-state loop, loaded at startup from --attract
+FLAG_INTRO_FRAMES: list[bytes] | None = None  # optional sampled clip played before the flag reveal
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -892,6 +893,7 @@ class Config:
     transcript: str = ""
     sessions: str = ""
     attract: str = ""
+    flag_intro: str = ""
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
     flag_voice: str = FLAG_VOICE_DEFAULT
@@ -1218,6 +1220,8 @@ async def conversation(sess: CallSession) -> None:
                                                   speed=cfg.flag_speed, pitch=cfg.flag_pitch)
                         sess.set_state(CallState.SPEAKING)
                         await sess.play(wink_frames(), "flag_fanfare")
+                        if FLAG_INTRO_FRAMES:
+                            await sess.play(FLAG_INTRO_FRAMES, "flag_intro")
                         await sess.play(frames, "flag")
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
@@ -1450,6 +1454,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--stats-port", type=int, default=int(env.get("WOPR_STATS_PORT", "0")))
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
+    p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
     p.add_argument("--joshua-text", default=env.get("WOPR_JOSHUA_TEXT", JOSHUA_LINE_DEFAULT), help="what WOPR says when the caller names Joshua")
@@ -1472,7 +1477,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
-                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
+                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract, flag_intro=a.flag_intro,
                  flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
                  flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
                  enable_flag=not a.no_flag,
@@ -1490,7 +1495,7 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
-    global ATTRACT_FRAMES
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES
     if cfg.attract:
         try:
             ATTRACT_FRAMES = load_attract(cfg.attract)
@@ -1498,6 +1503,13 @@ async def amain(cfg: Config) -> int:
                         sec=len(ATTRACT_FRAMES) * FRAME_PERIOD_S))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="attract_failed", path=cfg.attract, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.flag_intro:
+        try:
+            FLAG_INTRO_FRAMES = load_attract(cfg.flag_intro, gain=1.0)   # full-volume sampled clip
+            log.info(kv(event="flag_intro", path=cfg.flag_intro, frames=len(FLAG_INTRO_FRAMES),
+                        sec=len(FLAG_INTRO_FRAMES) * FRAME_PERIOD_S))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="flag_intro_failed", path=cfg.flag_intro, err=f"{type(e).__name__}: {e}"[:150]))
 
     if getattr(cfg, "check", False):
         ok = await startup_check(cfg, log)
