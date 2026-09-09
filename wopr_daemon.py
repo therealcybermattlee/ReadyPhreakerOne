@@ -448,7 +448,7 @@ MOVIE_BEATS = {
     "joshua":                    re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I),
     "play_game":                 re.compile(r"\b(play|game)\b", re.I),
     "global_thermonuclear_war":  re.compile(r"\b(thermo\s*nuclear|nuclear|therb a nuclear)\b", re.I),
-    "winning_move":              re.compile(r"\b(winning move|winning|way to win|not to play|not to move|not mak\w+ a move|no move|only move)\b", re.I),
+    "winning_move":              re.compile(r"\b(winning move|winning|way to win|not to play|not to move|not mak\w+ a move|no move|only move|not (going to |gonna )?play|not playing|won'?t play|will not play)\b", re.I),
 }
 # What WOPR speaks when all beats are hit. {flag} is substituted. Author-controlled via WOPR_FLAG_TEXT.
 FLAG_TEXT_DEFAULT = (
@@ -851,6 +851,7 @@ class Config:
     whisper_model: str = DEFAULTS["whisper_model"]
     stats_port: int = 0
     no_stt: bool = False
+    transcript: str = ""
     attract: str = ""
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
@@ -924,6 +925,23 @@ class CallSession:
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.t_start) * 1000.0
+
+    def record_turn(self, user: str, wopr: str, kind: str) -> None:
+        """Append one caller-utterance / WOPR-response pair to the JSONL dataset (best-effort)."""
+        if not self.cfg.transcript:
+            return
+        rec = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "call": self.call_hex, "callback": self.callback_kind, "turn": self.turns,
+            "kind": kind, "user": user, "wopr": wopr,
+            "quest": self.quest.progress, "unlocked": self.quest.unlocked,
+            "model": "stub" if self.cfg.stub_llm else self.cfg.model,
+        }
+        try:
+            with open(self.cfg.transcript, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError as e:
+            self.log.warning(kv(event="transcript_failed", err=f"{type(e).__name__}: {e}"[:120]))
 
     # --- audio in --------------------------------------------------------------------------
     def process_inbound_window(self, win: np.ndarray) -> None:
@@ -1090,6 +1108,7 @@ async def conversation(sess: CallSession) -> None:
                     sess.history.append({"role": "user", "content": text})
                     sess.history.append({"role": "assistant", "content": reveal})
                     del sess.history[:-HISTORY_MAX_TURNS]
+                    sess.record_turn(text, reveal, "flag")
                     try:
                         frames = await tts_frames(reveal, sess.log)
                         sess.set_state(CallState.SPEAKING)
@@ -1102,6 +1121,7 @@ async def conversation(sess: CallSession) -> None:
                     sess.history.append({"role": "user", "content": text})
                     sess.history.append({"role": "assistant", "content": cfg.joshua_text})
                     del sess.history[:-HISTORY_MAX_TURNS]
+                    sess.record_turn(text, cfg.joshua_text, "joshua")
                     try:
                         sess.set_state(CallState.SPEAKING)
                         await sess.play(await tts_frames(cfg.joshua_text, sess.log), "joshua")
@@ -1120,6 +1140,7 @@ async def conversation(sess: CallSession) -> None:
             sess.history.append({"role": "assistant", "content": reply})
             del sess.history[:-HISTORY_MAX_TURNS]
             sess.turns += 1
+            sess.record_turn(text, reply, "reply")
             frames = await tts_frames(reply, sess.log)
         except PipelineError as e:
             sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
@@ -1332,6 +1353,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-greeting", default=env.get("WOPR_CALLBACK_GREETING", CALLBACK_GREETING_DEFAULT))
     p.add_argument("--callback-win-greeting", default=env.get("WOPR_CALLBACK_WIN_GREETING", CALLBACK_WIN_GREETING_DEFAULT))
     p.add_argument("--callback-win-dial", default=env.get("WOPR_CALLBACK_WIN_DIAL", "PJSIP/payphone extension 2606@payphone"))
+    p.add_argument("--transcript", default=env.get("WOPR_TRANSCRIPT", ""), help="append caller/WOPR turn pairs as JSONL to this file (dataset)")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
@@ -1341,7 +1363,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
-                 callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial)
+                 callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,
+                 transcript=a.transcript)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 

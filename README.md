@@ -188,6 +188,20 @@ WOPR_NO_FLAG=1                         # disable the quest entirely
 
 A second whistle (barge-in) resets the quest along with the conversation.
 
+## Recording & transcript dataset
+
+Every call is recorded and every turn is logged to a dataset, with no announcement to the caller
+(operator's decision; the operator is a party to the call).
+
+- **Audio**: Asterisk `MixMonitor` on extensions 2600/2605/2606 writes one mixed-mono 8 kHz WAV
+  per call to `/opt/wopr/recordings/<YYYYmmdd-HHMMSS>-<uniqueid>[-cb|-win].wav` (~1 MB/min).
+- **Transcripts**: set `WOPR_TRANSCRIPT=/opt/wopr/transcripts/dataset.jsonl`; the daemon appends
+  one JSON line per turn: `{ts, call, callback, turn, kind, user, wopr, quest, unlocked, model}`
+  where `kind` is reply / joshua / flag. Tiny (well under 100 MB for a large event).
+
+Sizing for a 2-day, few-hundred-call event: roughly 1–3 GB of audio plus negligible text. The
+mini has ~265 GB free, so no external drive is needed; copy the folders off afterward for backup.
+
 ## WOPR calls back
 
 If the caller chooses **global thermonuclear war** and then hangs up, WOPR rings the payphone
