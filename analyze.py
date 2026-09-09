@@ -120,17 +120,46 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
             L.append(f"    {2600 + b:>4} Hz ({b:+4d})  {buckets[b]:>3}  {'#' * buckets[b]}")
     else:
         L.append("    (no whistles measured yet)")
+    L.append("")
+    L.append("  LEADERBOARD (top calls by composite score)")
+    ranked = sorted(sessions, key=score_call, reverse=True)[:10]
+    L.append(f"    {'#':>2}  {'call':8}  {'score':>5}  {'pts':>3}  {'won':>3}  {'win_s':>5}  {'whistle':>8}")
+    for i, s in enumerate(ranked, 1):
+        wm = s.get("win_ms"); hz = s.get("whistle_hz")
+        L.append(f"    {i:>2}  {s.get('call','?'):8}  {score_call(s):>5}  {s.get('points',0):>3}  "
+                 f"{'Y' if s.get('won') else '-':>3}  {(f'{wm/1000:.0f}' if wm else '-'):>5}  "
+                 f"{(f'{hz:.0f}Hz' if hz else '-'):>8}")
     L.append("=" * 66)
     summary = {"calls": len(sessions), "inbound": len(inbound), "callbacks": len(callbacks),
                "whistled": len(whistled), "won": len(won)}
     return "\n".join(L), summary
 
 
-def word_freqs(turns: list[dict], top: int) -> list[tuple[str, int]]:
-    """Frequencies of words callers said (the 'user' side of each turn)."""
+def score_call(s: dict) -> int:
+    """Composite 'player' score for a single call:
+      points   : 250 each (0–1000)
+      win      : +1000, plus a speed bonus up to +1000 (faster win = more)
+      whistle  : accuracy bonus up to +200 (dead-on 2600 Hz = full)
+    """
+    pts = s.get("points", 0) * 250
+    win = 0
+    if s.get("won"):
+        win = 1000
+        wm = s.get("win_ms")
+        if wm is not None:
+            win += max(0, round(1000 - wm / 60.0))       # ~60 s to zero the speed bonus
+    acc = 0
+    err = s.get("whistle_hz_err")
+    if err is not None:
+        acc = max(0, round(200 - abs(err) * 2))          # within ~100 Hz earns something
+    return pts + win + acc
+
+
+def word_freqs(turns: list[dict], top: int, field: str = "user") -> list[tuple[str, int]]:
+    """Frequencies of words callers said (the `field` side of each record)."""
     c = Counter()
     for t in turns:
-        text = (t.get("user") or "").lower()
+        text = (t.get(field) or "").lower()
         for w in re.findall(r"[a-z']+", text):
             w = w.strip("'")
             if len(w) >= 3 and w not in STOPWORDS:
@@ -189,6 +218,7 @@ def main(argv=None) -> int:
     p.add_argument("--transcript", default="/opt/wopr/transcripts/dataset.jsonl")
     p.add_argument("--html", default="")
     p.add_argument("--top", type=int, default=120)
+    p.add_argument("--user-field", default="user", help="transcript field holding caller text ('user', or 'text' for retranscript.jsonl)")
     a = p.parse_args(argv)
 
     sessions = load_jsonl(a.sessions)
@@ -199,7 +229,7 @@ def main(argv=None) -> int:
 
     report, summary = build_report(sessions, turns)
     print(report)
-    freqs = word_freqs(turns, a.top)
+    freqs = word_freqs(turns, a.top, a.user_field)
     if freqs:
         print("\n  TOP WORDS CALLERS SAID")
         for w, n in freqs[:20]:

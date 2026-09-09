@@ -604,14 +604,22 @@ def get_whisper(name: str = DEFAULTS["whisper_model"]):
     return _whisper_model
 
 
-def _stt_blocking(model, audio16k: np.ndarray) -> str:
+# Biases Whisper toward the game's vocabulary so proper nouns and the movie lines survive
+# 8 kHz phone audio ("Falken" not "Walker", "Joshua" not "Noshua"). Overridable via WOPR_STT_PROMPT.
+STT_PROMPT_DEFAULT = ("A phone call to WOPR, the computer from WarGames. The caller may say: "
+                      "Joshua, Professor Falken, shall we play a game, chess, checkers, "
+                      "global thermonuclear war, the only winning move is not to play.")
+
+
+def _stt_blocking(model, audio16k: np.ndarray, prompt: str) -> str:
     segments, _info = model.transcribe(
         audio16k, language="en", beam_size=1, vad_filter=False, without_timestamps=True,
-        condition_on_previous_text=False)
+        condition_on_previous_text=False, initial_prompt=prompt or None)
     return " ".join(s.text.strip() for s in segments).strip()
 
 
-async def transcribe(pcm8k: bytes, whisper_name: str, log: CallLogger | None = None) -> str:
+async def transcribe(pcm8k: bytes, whisper_name: str, log: CallLogger | None = None,
+                     prompt: str = STT_PROMPT_DEFAULT) -> str:
     global _stt_sem
     if _stt_sem is None:
         _stt_sem = asyncio.Semaphore(1)
@@ -621,7 +629,7 @@ async def transcribe(pcm8k: bytes, whisper_name: str, log: CallLogger | None = N
         async with _stt_sem:
             try:
                 model = await asyncio.to_thread(get_whisper, whisper_name)
-                text = await asyncio.to_thread(_stt_blocking, model, audio16k)
+                text = await asyncio.to_thread(_stt_blocking, model, audio16k, prompt)
             except Exception as e:  # noqa: BLE001 — any STT failure is recoverable
                 raise PipelineError("stt", f"{type(e).__name__}: {e}")
     if log:
@@ -874,6 +882,7 @@ class Config:
     whisper_model: str = DEFAULTS["whisper_model"]
     stats_port: int = 0
     no_stt: bool = False
+    stt_prompt: str = STT_PROMPT_DEFAULT
     transcript: str = ""
     sessions: str = ""
     attract: str = ""
@@ -1166,7 +1175,7 @@ async def conversation(sess: CallSession) -> None:
         try:
             if cfg.no_stt:
                 raise PipelineError("stt", "disabled (--no-stt)")
-            text = await transcribe(utt, cfg.whisper_model, sess.log)
+            text = await transcribe(utt, cfg.whisper_model, sess.log, cfg.stt_prompt)
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
@@ -1434,6 +1443,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-win-dial", default=env.get("WOPR_CALLBACK_WIN_DIAL", "PJSIP/payphone extension 2606@payphone"))
     p.add_argument("--transcript", default=env.get("WOPR_TRANSCRIPT", ""), help="append caller/WOPR turn pairs as JSONL to this file (dataset)")
     p.add_argument("--sessions", default=env.get("WOPR_SESSIONS", ""), help="append one per-call metrics record as JSONL to this file")
+    p.add_argument("--stt-prompt", default=env.get("WOPR_STT_PROMPT", STT_PROMPT_DEFAULT), help="Whisper initial_prompt to bias transcription toward the game vocabulary")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
@@ -1444,7 +1454,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
                  callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,
-                 transcript=a.transcript, sessions=a.sessions)
+                 transcript=a.transcript, sessions=a.sessions, stt_prompt=a.stt_prompt)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
