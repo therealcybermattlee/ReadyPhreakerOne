@@ -272,6 +272,7 @@ def resample(x: np.ndarray, src_sr: int, dst_sr: int, cutoff_hz: float | None = 
 
 ATTRACT_FRAMES: list[bytes] | None = None     # armed-state loop, loaded at startup from --attract
 FLAG_INTRO_FRAMES: list[bytes] | None = None  # optional sampled clip played before the flag reveal
+GREETING_FRAMES: list[bytes] | None = None    # optional custom audio for the opening greeting
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -897,6 +898,7 @@ class Config:
     sessions: str = ""
     attract: str = ""
     flag_intro: str = ""
+    greeting_audio: str = ""
     greeting: str = GREETING_DEFAULT
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
@@ -1187,7 +1189,10 @@ async def conversation(sess: CallSession) -> None:
     else:
         greeting = cfg.greeting
     try:
-        await sess.play(await tts_frames(greeting, sess.log), "greeting")
+        if not sess.is_callback and GREETING_FRAMES:
+            await sess.play(GREETING_FRAMES, "greeting_audio")
+        else:
+            await sess.play(await tts_frames(greeting, sess.log), "greeting")
     except PipelineError as e:
         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
     while True:
@@ -1464,6 +1469,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
+    p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
     p.add_argument("--greeting", default=env.get("WOPR_GREETING", GREETING_DEFAULT), help="opening line after the whistle (neutral; the Falken greeting is reserved for Joshua)")
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
@@ -1489,6 +1495,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract, flag_intro=a.flag_intro,
+                 greeting_audio=a.greeting_audio,
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
                  flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
                  enable_flag=not a.no_flag,
@@ -1507,7 +1514,7 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
-    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES
     if cfg.attract:
         try:
             ATTRACT_FRAMES = load_attract(cfg.attract)
@@ -1522,6 +1529,13 @@ async def amain(cfg: Config) -> int:
                         sec=len(FLAG_INTRO_FRAMES) * FRAME_PERIOD_S))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="flag_intro_failed", path=cfg.flag_intro, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.greeting_audio:
+        try:
+            GREETING_FRAMES = load_attract(cfg.greeting_audio, gain=1.0)   # custom opening greeting
+            log.info(kv(event="greeting_audio", path=cfg.greeting_audio, frames=len(GREETING_FRAMES),
+                        sec=len(GREETING_FRAMES) * FRAME_PERIOD_S))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="greeting_audio_failed", path=cfg.greeting_audio, err=f"{type(e).__name__}: {e}"[:150]))
 
     if getattr(cfg, "check", False):
         ok = await startup_check(cfg, log)
