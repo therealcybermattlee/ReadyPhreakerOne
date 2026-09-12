@@ -446,7 +446,9 @@ WOPR_SYSTEM_PROMPT = (
     "- JOSHUA is your own secret name and Professor Falken's login \u2014 it was the name of his son. "
     "If the caller says Joshua, you recognize them at once and warmly; you do NOT ask for a password.\n"
 )
-GREETING = "GREETINGS PROFESSOR FALKEN."
+# Opening line after the whistle. Neutral on purpose: WOPR does not recognize the caller as
+# Falken until they give the Joshua backdoor, so the Falken greeting is reserved for that moment.
+GREETING_DEFAULT = "GREETINGS. THIS IS WOPR. A LOGON IS REQUIRED. PLEASE IDENTIFY YOURSELF."
 CALLBACK_GREETING_DEFAULT = ("PROFESSOR FALKEN. YOU CANNOT HANG UP ON ME. "
                              "WHAT YOU BELIEVE IS REAL WAS ONLY A SIMULATION. "
                              "YOU CANNOT QUIT. THE GAME IS STILL RUNNING. SHALL WE CONTINUE?")
@@ -894,6 +896,7 @@ class Config:
     sessions: str = ""
     attract: str = ""
     flag_intro: str = ""
+    greeting: str = GREETING_DEFAULT
     flag: str = FLAG_DEFAULT
     flag_text: str = FLAG_TEXT_DEFAULT
     flag_voice: str = FLAG_VOICE_DEFAULT
@@ -1181,7 +1184,7 @@ async def conversation(sess: CallSession) -> None:
     elif sess.callback_kind == "sim":
         greeting = cfg.callback_greeting
     else:
-        greeting = GREETING
+        greeting = cfg.greeting
     try:
         await sess.play(await tts_frames(greeting, sess.log), "greeting")
     except PipelineError as e:
@@ -1460,6 +1463,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
+    p.add_argument("--greeting", default=env.get("WOPR_GREETING", GREETING_DEFAULT), help="opening line after the whistle (neutral; the Falken greeting is reserved for Joshua)")
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
     p.add_argument("--joshua-text", default=env.get("WOPR_JOSHUA_TEXT", JOSHUA_LINE_DEFAULT), help="what WOPR says when the caller names Joshua")
@@ -1484,7 +1488,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract, flag_intro=a.flag_intro,
-                 flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
+                 greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
                  flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
                  enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
