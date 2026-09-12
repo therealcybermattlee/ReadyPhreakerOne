@@ -1,12 +1,12 @@
 # CrunchWhistle — 2600 Hz whistle → WOPR
 
 A phone-phreaking homage. Lift the handset of a coin-op payphone, hear nothing but line silence,
-whistle 2600 Hz, and the line *winks*. Then a flat, croaking computer voice says
-**GREETINGS PROFESSOR FALKEN** and WOPR from *WarGames* wants to play a game.
+whistle 2600 Hz, and the line *winks*. Then a flat, synthetic computer voice says
+**GREETINGS. THIS IS WOPR.** and WOPR from *WarGames* wants to play a game.
 
 Everything runs on one headless Apple Silicon Mac mini: Asterisk (built from source), the
-AudioSocket daemon, local speech recognition, a Votrax-style voice, and a local LLM. Nothing in
-the call path leaves the machine.
+AudioSocket daemon, local speech recognition, a retro DECtalk-style synthesized voice, and a local
+LLM. Nothing in the call path leaves the machine.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ payphone ──FXS── Grandstream HT802 ──SIP/RTP (μ-law)── Asterisk
                                                                                               ├─ 480 Hz wink
                                                                                               ├─ energy VAD → faster-whisper (base.en, int8)
                                                                                               ├─ Ollama /api/chat (qwen3:8b, think off)
-                                                                                              └─ espeak-ng +croak → 8 kHz, 20 ms-paced playback
+                                                                                              └─ espeak-ng +klatt → 8 kHz, 20 ms-paced playback
 ```
 
 - `wopr_daemon.py` — the whole daemon, one file, `asyncio`, one `TaskGroup` per call
@@ -159,7 +159,10 @@ Knobs, all at the top of `wopr_daemon.py` (printed as `event=config` at startup)
   whistle over TTS is missed. 20 (200 ms) passed with a −12 dB / 40 ms simulated sidetone.
 - `VAD_ABS_MIN`, `VAD_START_RATIO` — if the payphone line is noisy, raise; if quiet speakers are
   cut off, lower.
-- `ESPEAK_SPEED/PITCH/AMPLITUDE` — the voice. `+croak` is the point; do not swap in a neural voice.
+- WOPR's voice — `en-us+klatt` (DECtalk-style; clearer over a phone handset than the old `+croak`).
+  Retune live without a redeploy via `WOPR_VOICE` / `WOPR_SPEED` / `WOPR_PITCH` / `WOPR_AMPLITUDE`
+  in `wopr.env` (defaults `en-us+klatt` / 135 / 40 / 170). Keep it a retro synth; do not swap in a
+  neural voice. The flag reveal keeps its own brighter Johnny 5 voice (`WOPR_FLAG_VOICE`).
 - `LLM_NUM_PREDICT`, `MAX_REPLY_CHARS` — reply length. `WOPR_MODEL=llama3.1:8b` in `wopr.env` is the
   documented alternative (`ollama pull` it first).
 
