@@ -516,6 +516,90 @@ class MovieQuest:
         return f"{len(self.hit)}/{len(MOVIE_BEATS)}"
 
 
+# --- "How about a nice game of chess?" — move-by-move playthrough --------------------------------
+# After the flag, WOPR offers a game and, if the caller says yes, narrates a real game one move at a
+# time. The caller paces it: any reply advances a move; "stop"/"quit"/"resign" ends it. Default is
+# the Opera Game (Paul Morphy vs Duke Karl / Count Isouard, Paris 1858) — the canonical brilliancy,
+# a queen sacrifice into mate. Override the SAN move list with WOPR_CHESS. No chess engine needed;
+# the moves are canned and only spoken, never validated.
+CHESS_MOVES_DEFAULT = (
+    "e4 e5 Nf3 d6 d4 Bg4 dxe5 Bxf3 Qxf3 dxe5 Bc4 Nf6 Qb3 Qe7 Nc3 c6 Bg5 b5 "
+    "Nxb5 cxb5 Bxb5+ Nbd7 O-O-O Rd8 Rxd7 Rxd7 Rd1 Qe6 Bxd7+ Nxd7 Qb8+ Nxb8 Rd8#"
+)
+CHESS_OFFER_DEFAULT = ("A STRANGE GAME. HOW ABOUT A NICE GAME OF CHESS? "
+                       "SAY YES TO PLAY, AND SAY NEXT FOR EACH MOVE.")
+CHESS_INTRO_DEFAULT = "A NICE GAME OF CHESS. WHITE MOVES FIRST."
+CHESS_STOP_LINE_DEFAULT = "GAME ADJOURNED, PROFESSOR FALKEN. THE ONLY WINNING MOVE IS NOT TO PLAY."
+
+# Enter chess mode (once offered) or start it outright; advance a move; or quit.
+CHESS_WORD_RE = re.compile(r"\bchess\b", re.I)
+CHESS_YES_RE = re.compile(r"\b(next|go|going|continue|move|yes|yeah|yep|sure|ok|okay|okey|"
+                          r"please|proceed|another|more|again|play|do it|on)\b", re.I)
+CHESS_STOP_RE = re.compile(r"\b(stop|no|nope|quit|done|enough|resign|cancel|exit|finish|"
+                           r"give up|end)\b", re.I)
+
+_CHESS_PIECES = {"K": "KING", "Q": "QUEEN", "R": "ROOK", "B": "BISHOP", "N": "KNIGHT"}
+_CHESS_PIECE_RE = re.compile(r"^([KQRBN])([a-h]?)([1-8]?)(x?)([a-h][1-8])$")
+_CHESS_PAWN_CAP_RE = re.compile(r"^([a-h])x([a-h][1-8])$")
+_CHESS_PAWN_RE = re.compile(r"^[a-h][1-8]$")
+
+
+def _chess_square(sq: str) -> str:
+    return f"{sq[0].upper()} {sq[1]}"
+
+
+def move_to_speech(san: str) -> str:
+    """Turn one SAN token ('Nxe5', 'exd5', 'O-O-O', 'Rd8#') into spoken WOPR phrasing."""
+    s = san.strip()
+    suffix = ""
+    if s.endswith("#"):
+        suffix, s = ", CHECKMATE", s[:-1]
+    elif s.endswith("+"):
+        suffix, s = ", CHECK", s[:-1]
+    if s in ("O-O", "0-0"):
+        return "CASTLES KINGSIDE" + suffix
+    if s in ("O-O-O", "0-0-0"):
+        return "CASTLES QUEENSIDE" + suffix
+    promo = ""
+    m = re.search(r"=([QRBN])$", s)
+    if m:
+        promo, s = ", PROMOTES TO " + _CHESS_PIECES[m.group(1)], s[:m.start()]
+    m = _CHESS_PIECE_RE.match(s)
+    if m:
+        piece, dfile, drank, cap, dest = m.groups()
+        who = _CHESS_PIECES[piece]
+        if dfile:
+            who += f" ON {dfile.upper()}"
+        elif drank:
+            who += f" ON RANK {drank}"
+        verb = " TAKES " if cap else " TO "
+        return who + verb + _chess_square(dest) + promo + suffix
+    m = _CHESS_PAWN_CAP_RE.match(s)
+    if m:
+        src, dest = m.groups()
+        return f"{src.upper()} PAWN TAKES {_chess_square(dest)}{promo}{suffix}"
+    if _CHESS_PAWN_RE.match(s):
+        return f"PAWN TO {_chess_square(s)}{promo}{suffix}"
+    return "MOVE " + " ".join(s) + suffix   # fallback: never seen, spell it out
+
+
+def chess_next_line(sess: "CallSession") -> str:
+    """Advance the game one ply and return WOPR's spoken line. Clears in_chess at mate / end."""
+    moves = sess.cfg.chess_moves.split()
+    if sess.chess_idx >= len(moves):
+        sess.in_chess = False
+        return "THE GAME IS OVER, PROFESSOR FALKEN. SHALL WE PLAY ANOTHER?"
+    san = moves[sess.chess_idx]
+    side = "WHITE" if sess.chess_idx % 2 == 0 else "BLACK"
+    sess.chess_idx += 1
+    line = f"{side}. {move_to_speech(san)}."
+    if san.endswith("#"):
+        sess.in_chess = False
+        line += (f" {side} WINS. A BEAUTIFUL GAME, PROFESSOR FALKEN. "
+                 "SHALL WE PLAY ANOTHER?")
+    return line
+
+
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _MD_RE = re.compile(r"[*_`#>\[\]()~|]")
 _EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
@@ -910,6 +994,11 @@ class Config:
     joshua_text: str = JOSHUA_LINE_DEFAULT
     enable_flag: bool = True
     enable_callback: bool = True
+    enable_chess: bool = True
+    chess_moves: str = CHESS_MOVES_DEFAULT
+    chess_offer: str = CHESS_OFFER_DEFAULT
+    chess_intro: str = CHESS_INTRO_DEFAULT
+    chess_stop_line: str = CHESS_STOP_LINE_DEFAULT
     asterisk_bin: str = "/opt/asterisk/sbin/asterisk"
     callback_dial: str = "PJSIP/payphone extension 2605@payphone"
     callback_greeting: str = CALLBACK_GREETING_DEFAULT
@@ -980,6 +1069,9 @@ class CallSession:
                              have=",".join(sorted(self.quest.hit))))
             _pending_quest = set()
         self.played_gtw = False
+        self.in_chess = False        # caller is in a move-by-move chess playthrough
+        self.chess_idx = 0           # ply index into cfg.chess_moves
+        self.chess_offered = False   # WOPR offered chess (post-flag); a yes starts the game
         self.closed = False
 
     # --- state ---------------------------------------------------------------------------
@@ -1216,6 +1308,37 @@ async def conversation(sess: CallSession) -> None:
                 continue
             if MOVIE_BEATS["global_thermonuclear_war"].search(text):
                 sess.played_gtw = True
+            # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
+            if cfg.enable_chess and sess.in_chess:
+                if CHESS_STOP_RE.search(text):
+                    sess.in_chess = False
+                    line = cfg.chess_stop_line
+                else:
+                    line = chess_next_line(sess)
+                sess.record_turn(text, line, "chess")
+                try:
+                    sess.set_state(CallState.SPEAKING)
+                    await sess.play(await tts_frames(line, sess.log), "chess")
+                except PipelineError as e:
+                    sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                continue
+            if cfg.enable_chess and (sess.chess_offered or CHESS_WORD_RE.search(text)):
+                declines = CHESS_STOP_RE.search(text) and not CHESS_WORD_RE.search(text)
+                wants = CHESS_YES_RE.search(text) or CHESS_WORD_RE.search(text)
+                if wants and not declines:
+                    sess.chess_offered = False
+                    sess.in_chess = True
+                    sess.chess_idx = 0
+                    line = cfg.chess_intro + " " + chess_next_line(sess)
+                    sess.record_turn(text, line, "chess")
+                    try:
+                        sess.set_state(CallState.SPEAKING)
+                        await sess.play(await tts_frames(line, sess.log), "chess")
+                    except PipelineError as e:
+                        sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                    continue
+                if declines:
+                    sess.chess_offered = False   # caller passed; fall through to a normal reply
             if cfg.enable_flag and not sess.quest.unlocked:
                 beat = sess.quest.update(text)
                 if beat:
@@ -1239,6 +1362,10 @@ async def conversation(sess: CallSession) -> None:
                         if FLAG_INTRO_FRAMES:
                             await sess.play(FLAG_INTRO_FRAMES, "flag_intro")
                         await sess.play(frames, "flag")
+                        if cfg.enable_chess:
+                            # WOPR's post-mortem, straight from the film: offer a nice game of chess.
+                            sess.chess_offered = True
+                            await sess.play(await tts_frames(cfg.chess_offer, sess.log), "chess_offer")
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                     continue
@@ -1295,6 +1422,9 @@ async def brain_task(sess: CallSession) -> None:
         if sess.state is not CallState.ARMED:
             sess.history.clear()
             sess.quest = MovieQuest()
+            sess.in_chess = False
+            sess.chess_idx = 0
+            sess.chess_offered = False
             sess.log.info(kv(event="bargein", dropped_frames=dropped, gen=sess.playback_gen))
         conv = asyncio.create_task(conversation(sess), name=f"conv-{sess.call_hex}-{sess.playback_gen}")
         waiter = asyncio.create_task(sess.detected_evt.wait(), name=f"bargewait-{sess.call_hex}")
@@ -1481,6 +1611,10 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--flag-pitch", type=int, default=int(env.get("WOPR_FLAG_PITCH", FLAG_PITCH_DEFAULT)))
     p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
+    p.add_argument("--no-chess", action="store_true", default=env.get("WOPR_NO_CHESS", "") in ("1", "true", "yes"), help="disable the post-flag move-by-move chess game")
+    p.add_argument("--chess-moves", default=env.get("WOPR_CHESS", CHESS_MOVES_DEFAULT), help="SAN move list WOPR narrates one ply at a time (default: the Opera Game)")
+    p.add_argument("--chess-offer", default=env.get("WOPR_CHESS_OFFER", CHESS_OFFER_DEFAULT), help="line WOPR speaks after the flag to offer a game of chess")
+    p.add_argument("--chess-intro", default=env.get("WOPR_CHESS_INTRO", CHESS_INTRO_DEFAULT), help="line spoken before the first move when a game begins")
     p.add_argument("--asterisk-bin", default=env.get("WOPR_ASTERISK_BIN", "/opt/asterisk/sbin/asterisk"))
     p.add_argument("--callback-dial", default=env.get("WOPR_CALLBACK_DIAL", "PJSIP/payphone extension 2605@payphone"))
     p.add_argument("--callback-delay", type=float, default=float(env.get("WOPR_CALLBACK_DELAY", CALLBACK_DELAY_S)))
@@ -1501,7 +1635,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
                  flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
                  enable_flag=not a.no_flag,
-                 enable_callback=not a.no_callback, asterisk_bin=a.asterisk_bin,
+                 enable_callback=not a.no_callback, enable_chess=not a.no_chess,
+                 chess_moves=a.chess_moves, chess_offer=a.chess_offer, chess_intro=a.chess_intro,
+                 asterisk_bin=a.asterisk_bin,
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
                  callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,

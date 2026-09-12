@@ -473,3 +473,52 @@ class QuestCarryoverTests(unittest.TestCase):
             w._pending_quest = set()
 
         asyncio.run(scenario())
+
+
+class ChessTests(unittest.TestCase):
+    """SAN -> speech, and the caller-paced playthrough to checkmate."""
+
+    def test_move_to_speech_covers_san_forms(self):
+        self.assertEqual(w.move_to_speech("e4"), "PAWN TO E 4")
+        self.assertEqual(w.move_to_speech("Nf3"), "KNIGHT TO F 3")
+        self.assertEqual(w.move_to_speech("exd5"), "E PAWN TAKES D 5")
+        self.assertEqual(w.move_to_speech("Bxf3"), "BISHOP TAKES F 3")
+        self.assertEqual(w.move_to_speech("O-O"), "CASTLES KINGSIDE")
+        self.assertEqual(w.move_to_speech("O-O-O"), "CASTLES QUEENSIDE")
+        self.assertEqual(w.move_to_speech("Bb5+"), "BISHOP TO B 5, CHECK")
+        self.assertEqual(w.move_to_speech("Nbd7"), "KNIGHT ON B TO D 7")
+        self.assertEqual(w.move_to_speech("Rd8#"), "ROOK TO D 8, CHECKMATE")
+        self.assertEqual(w.move_to_speech("e8=Q"), "PAWN TO E 8, PROMOTES TO QUEEN")
+
+    def test_default_game_runs_to_mate_and_clears_state(self):
+        plies = w.CHESS_MOVES_DEFAULT.split()
+        self.assertTrue(w.CHESS_MOVES_DEFAULT.split()[-1].endswith("#"), "game must end in mate")
+
+        class _S:
+            def __init__(self): self.cfg = w.Config(); self.chess_idx = 0; self.in_chess = True
+        s = _S()
+        spoken = []
+        while s.in_chess and s.chess_idx < len(plies) + 5:
+            spoken.append(w.chess_next_line(s))
+        self.assertEqual(len(spoken), len(plies))
+        self.assertFalse(s.in_chess, "in_chess clears itself at checkmate")
+        self.assertIn("CHECKMATE", spoken[-1])
+        self.assertIn("WHITE WINS", spoken[-1])
+        self.assertTrue(spoken[0].startswith("WHITE."), "white moves first")
+        self.assertTrue(spoken[1].startswith("BLACK."))
+
+    def test_session_starts_with_chess_off(self):
+        import asyncio
+
+        async def scenario():
+            class _W:
+                def get_extra_info(self, k): return None
+                def write(self, b): pass
+                async def drain(self): pass
+                def close(self): pass
+            sess = w.CallSession(b"\x33" * 16, None, _W(), w.Config())
+            self.assertFalse(sess.in_chess)
+            self.assertFalse(sess.chess_offered)
+            self.assertEqual(sess.chess_idx, 0)
+
+        asyncio.run(scenario())

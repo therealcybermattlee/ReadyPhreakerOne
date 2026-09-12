@@ -188,6 +188,24 @@ WOPR_NO_FLAG=1                         # disable the quest entirely
 
 A second whistle (barge-in) resets the quest along with the conversation.
 
+### "How about a nice game of chess?"
+
+Straight after the flag, WOPR offers a game of chess (as it does in the film). If the caller says
+**yes**, WOPR narrates a real game **one move at a time**, caller-paced: any reply ("next", "go",
+"move"…) advances a ply; "stop" / "quit" / "resign" adjourns it. The default game is the **Opera
+Game** (Morphy, Paris 1858) — a queen sacrifice into mate on move 17. Saying "chess" at any point
+also starts a game, so it's replayable without the flag. Turns are logged with `kind=chess`.
+
+```
+WOPR_NO_CHESS=1                        # disable the chess game
+WOPR_CHESS="e4 e5 Nf3 ..."            # override the SAN move list (must end in # to declare mate)
+WOPR_CHESS_OFFER=...                   # the "nice game of chess?" offer line
+WOPR_CHESS_INTRO=...                   # spoken before the first move
+```
+
+No chess engine: the moves are canned SAN, converted to speech (`Rd8#` → "ROOK TO D 8, CHECKMATE")
+and only spoken, never validated.
+
 ## Recording & transcript dataset
 
 Every call is recorded and every turn is logged to a dataset, with no announcement to the caller
