@@ -907,6 +907,7 @@ class Config:
     callback_greeting: str = CALLBACK_GREETING_DEFAULT
     callback_win_greeting: str = CALLBACK_WIN_GREETING_DEFAULT
     callback_win_dial: str = "PJSIP/payphone extension 2606@payphone"
+    callback_preroll_ms: int = 1200   # silence before a callback greeting while the media path comes up
     callback_delay: float = CALLBACK_DELAY_S
     callback_cooldown: float = CALLBACK_COOLDOWN_S      # skip Whisper entirely (detector-only harness runs)
 
@@ -1169,8 +1170,12 @@ async def conversation(sess: CallSession) -> None:
     """One session: wink, greeting, then capture → STT → LLM → TTS → play, until cancelled."""
     cfg = sess.cfg
     sess.set_state(CallState.SPEAKING)
-    if not sess.is_callback:
-        await sess.play(wink_frames(), "wink")
+    if sess.is_callback and cfg.callback_preroll_ms > 0:
+        # On an originated callback the media path to the payphone takes a beat to come up.
+        # Hold with silence so the greeting isn't clipped into dead air.
+        await sess.play([b"\x00" * FRAME_BYTES] * (cfg.callback_preroll_ms // 20), "callback_preroll")
+    # Wink on every session (callbacks too) as an audible "line is live" cue before WOPR speaks.
+    await sess.play(wink_frames(), "wink")
     if sess.callback_kind == "win":
         greeting = cfg.callback_win_greeting
     elif sess.callback_kind == "sim":
@@ -1470,6 +1475,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-greeting", default=env.get("WOPR_CALLBACK_GREETING", CALLBACK_GREETING_DEFAULT))
     p.add_argument("--callback-win-greeting", default=env.get("WOPR_CALLBACK_WIN_GREETING", CALLBACK_WIN_GREETING_DEFAULT))
     p.add_argument("--callback-win-dial", default=env.get("WOPR_CALLBACK_WIN_DIAL", "PJSIP/payphone extension 2606@payphone"))
+    p.add_argument("--callback-preroll-ms", type=int, default=int(env.get("WOPR_CALLBACK_PREROLL", "1200")), help="silence before a callback greeting so it isn't clipped while media comes up")
     p.add_argument("--transcript", default=env.get("WOPR_TRANSCRIPT", ""), help="append caller/WOPR turn pairs as JSONL to this file (dataset)")
     p.add_argument("--sessions", default=env.get("WOPR_SESSIONS", ""), help="append one per-call metrics record as JSONL to this file")
     p.add_argument("--stt-prompt", default=env.get("WOPR_STT_PROMPT", STT_PROMPT_DEFAULT), help="Whisper initial_prompt to bias transcription toward the game vocabulary")
@@ -1485,6 +1491,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  callback_dial=a.callback_dial, callback_delay=a.callback_delay,
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
                  callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,
+                 callback_preroll_ms=a.callback_preroll_ms,
                  transcript=a.transcript, sessions=a.sessions, stt_prompt=a.stt_prompt)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
