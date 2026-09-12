@@ -448,7 +448,8 @@ WOPR_SYSTEM_PROMPT = (
 )
 # Opening line after the whistle. Neutral on purpose: WOPR does not recognize the caller as
 # Falken until they give the Joshua backdoor, so the Falken greeting is reserved for that moment.
-GREETING_DEFAULT = "GREETINGS. THIS IS WOPR. A LOGON IS REQUIRED. PLEASE IDENTIFY YOURSELF."
+GREETING_DEFAULT = ("GREETINGS. THIS IS WOPR. HOW ARE YOU FEELING TODAY? "
+                    "A LOGON IS REQUIRED. PLEASE IDENTIFY YOURSELF.")
 CALLBACK_GREETING_DEFAULT = ("PROFESSOR FALKEN. YOU CANNOT HANG UP ON ME. "
                              "WHAT YOU BELIEVE IS REAL WAS ONLY A SIMULATION. "
                              "YOU CANNOT QUIT. THE GAME IS STILL RUNNING. SHALL WE CONTINUE?")
