@@ -87,10 +87,12 @@ MIN_UTTERANCE_MS = 300        # shorter utterances are discarded (clicks, breath
 MAX_UTTERANCE_MS = 15000      # force endpoint
 
 # --- TTS (espeak-ng, Votrax SC-01 homage — do not substitute a neural voice) -------------------
-ESPEAK_VOICE = "en-us+croak"
-ESPEAK_SPEED = 140
-ESPEAK_PITCH = 30
-ESPEAK_AMPLITUDE = 150
+# Klatt (DECtalk-style) synth: clearer over a phone handset than +croak while staying an
+# unmistakable 1983 machine voice. Override at runtime with WOPR_VOICE/WOPR_SPEED/WOPR_PITCH.
+ESPEAK_VOICE = os.environ.get("WOPR_VOICE", "en-us+klatt")
+ESPEAK_SPEED = int(os.environ.get("WOPR_SPEED", "135"))
+ESPEAK_PITCH = int(os.environ.get("WOPR_PITCH", "40"))
+ESPEAK_AMPLITUDE = int(os.environ.get("WOPR_AMPLITUDE", "170"))
 ESPEAK_RATE_HZ = 22050        # what espeak-ng --stdout emits
 
 # --- LLM (Ollama, local) ----------------------------------------------------------------------
