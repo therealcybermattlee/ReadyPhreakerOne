@@ -275,6 +275,7 @@ def resample(x: np.ndarray, src_sr: int, dst_sr: int, cutoff_hz: float | None = 
 ATTRACT_FRAMES: list[bytes] | None = None     # armed-state loop, loaded at startup from --attract
 FLAG_INTRO_FRAMES: list[bytes] | None = None  # optional sampled clip played before the flag reveal
 GREETING_FRAMES: list[bytes] | None = None    # optional custom audio for the opening greeting
+SONG_FRAMES: list[bytes] | None = None         # song played by a song-experience (GLaDOS "Still Alive")
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -524,20 +525,24 @@ ROBOCOP_SYSTEM_PROMPT = (
 )
 ROBOCOP_GREETING = "COME QUIETLY OR THERE WILL BE TROUBLE. DEAD OR ALIVE, YOU ARE COMING WITH ME."
 
+# The menu prompt the caller hears on pickup (idle attract, looped). Synthesized at startup.
+MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. WHAT WOULD YOU LIKE TO DO TODAY?")
+
 # STT bias so the wake phrases transcribe reliably from idle speech.
-WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. "
-                       "Dead or alive. Shall we play a game.")
+WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
+                       "The cake is a lie. Shall we play a game.")
 
 
 @dataclasses.dataclass(frozen=True)
 class Experience:
     key: str
-    system_prompt: str
-    greeting: str
+    system_prompt: str = ""
+    greeting: str = ""
     wake: "re.Pattern | None" = None        # None => summoned only by the whistle
     voice: str = ESPEAK_VOICE
     speed: int = ESPEAK_SPEED
     pitch: int = ESPEAK_PITCH
+    song: bool = False                       # if True, playing this experience plays SONG_FRAMES
 
 
 WOPR_EXPERIENCE = Experience(
@@ -551,9 +556,14 @@ ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
     voice="en-us+klatt", speed=140, pitch=35)
+# GLaDOS easter egg: saying the passphrase plays the "Still Alive" song (SONG_FRAMES), no LLM chat.
+GLADOS_EXPERIENCE = Experience(
+    "glados",
+    wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
+    song=True)
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
-WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE]
+WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, GLADOS_EXPERIENCE]
 
 
 def match_experience(text: str) -> "Experience | None":
@@ -1055,6 +1065,9 @@ class Config:
     transcript: str = ""
     sessions: str = ""
     attract: str = ""
+    menu_greeting: str = MENU_GREETING_DEFAULT   # spoken idle prompt (synthesized); overrides attract WAV
+    menu_gap_ms: int = 4000                      # silence after the menu prompt before it repeats
+    song: str = ""                               # WAV played by a song-experience (GLaDOS "Still Alive")
     flag_intro: str = ""
     greeting_audio: str = ""
     greeting: str = GREETING_DEFAULT
@@ -1354,6 +1367,14 @@ async def conversation(sess: CallSession) -> None:
     """One session: wink, greeting, then capture → STT → LLM → TTS → play, until cancelled."""
     cfg = sess.cfg
     sess.set_state(CallState.SPEAKING)
+    if sess.experience.song:
+        # A song-experience (GLaDOS "the cake is a lie") just plays the track, then returns to idle.
+        sess.log.info(kv(event="experience", key=sess.experience.key, song=1))
+        if SONG_FRAMES:
+            await sess.play(SONG_FRAMES, "song")
+        else:
+            sess.log.warning(kv(event="song_missing", key=sess.experience.key))
+        return
     if sess.is_callback and cfg.callback_preroll_ms > 0:
         # On an originated callback the media path to the payphone takes a beat to come up.
         # Hold with silence so the greeting isn't clipped into dead air.
@@ -1721,6 +1742,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--stats-port", type=int, default=int(env.get("WOPR_STATS_PORT", "0")))
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
+    p.add_argument("--menu-greeting", default=env.get("WOPR_MENU_GREETING", MENU_GREETING_DEFAULT), help="spoken idle prompt heard on pickup, synthesized and looped; overrides --attract (empty to use the WAV)")
+    p.add_argument("--menu-gap-ms", type=int, default=int(env.get("WOPR_MENU_GAP_MS", "4000")), help="silence after the menu prompt before it repeats")
+    p.add_argument("--song", default=env.get("WOPR_SONG", ""), help="WAV played by a song-experience, e.g. GLaDOS 'Still Alive' on 'the cake is a lie'")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
     p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
     p.add_argument("--greeting", default=env.get("WOPR_GREETING", GREETING_DEFAULT), help="opening line after the whistle (neutral; the Falken greeting is reserved for Joshua)")
@@ -1753,7 +1777,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
     a = p.parse_args(argv)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
-                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract, flag_intro=a.flag_intro,
+                 stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
+                 menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms, song=a.song,
+                 flag_intro=a.flag_intro,
                  greeting_audio=a.greeting_audio,
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
                  flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
@@ -1776,14 +1802,31 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
-    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES
-    if cfg.attract:
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES
+    if cfg.menu_greeting:
+        # Spoken idle prompt heard on pickup, looped with a trailing pause. Overrides the WAV attract.
+        try:
+            spoken = await tts_frames(cfg.menu_greeting, log)
+            pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
+            ATTRACT_FRAMES = spoken + pad
+            log.info(kv(event="menu_greeting", chars=len(cfg.menu_greeting),
+                        frames=len(ATTRACT_FRAMES), sec=round(len(ATTRACT_FRAMES) * FRAME_PERIOD_S, 1)))
+        except PipelineError as e:
+            log.error(kv(event="menu_greeting_failed", err=e.err[:150]))
+    elif cfg.attract:
         try:
             ATTRACT_FRAMES = load_attract(cfg.attract)
             log.info(kv(event="attract", path=cfg.attract, frames=len(ATTRACT_FRAMES),
                         sec=len(ATTRACT_FRAMES) * FRAME_PERIOD_S))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="attract_failed", path=cfg.attract, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.song:
+        try:
+            SONG_FRAMES = load_attract(cfg.song, gain=1.0)   # full-volume song for song-experiences
+            log.info(kv(event="song", path=cfg.song, frames=len(SONG_FRAMES),
+                        sec=round(len(SONG_FRAMES) * FRAME_PERIOD_S, 1)))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="song_failed", path=cfg.song, err=f"{type(e).__name__}: {e}"[:150]))
     if cfg.flag_intro:
         try:
             FLAG_INTRO_FRAMES = load_attract(cfg.flag_intro, gain=1.0)   # full-volume sampled clip

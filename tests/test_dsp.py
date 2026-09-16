@@ -537,6 +537,8 @@ class WakeExperienceTests(unittest.TestCase):
             "it is robocop": "robocop",
             "officer murphy": "robocop",
             "dead or alive you are coming with me": "robocop",
+            "the cake is a lie": "glados",
+            "cake is a lie": "glados",
         }
         for text, key in cases.items():
             exp = w.match_experience(text)
@@ -549,10 +551,21 @@ class WakeExperienceTests(unittest.TestCase):
 
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
-        self.assertEqual(keys, ["wopr", "skynet", "robocop"])
-        prompts = {e.system_prompt for e in w.WAKE_EXPERIENCES}
-        self.assertEqual(len(prompts), 3, "each character has its own system prompt")
-        self.assertTrue(all(e.greeting for e in w.WAKE_EXPERIENCES))
+        self.assertEqual(keys, ["wopr", "skynet", "robocop", "glados"])
+        chat = [e for e in w.WAKE_EXPERIENCES if not e.song]
+        prompts = {e.system_prompt for e in chat}
+        self.assertEqual(len(prompts), 3, "each chat character has its own system prompt")
+        self.assertTrue(all(e.greeting for e in chat))
+
+    def test_glados_is_a_song_experience(self):
+        g = w.match_experience("the cake is a lie")
+        self.assertEqual(g.key, "glados")
+        self.assertTrue(g.song, "glados plays a song, not an LLM chat")
+
+    def test_menu_greeting_is_the_default_idle_prompt(self):
+        c = w.parse_args([])
+        self.assertIn("GRRCON", c.menu_greeting.upper())
+        self.assertIn("HACKER", c.menu_greeting.upper())
 
     def test_session_defaults_to_wopr(self):
         import asyncio
