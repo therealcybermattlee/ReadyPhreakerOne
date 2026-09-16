@@ -522,3 +522,53 @@ class ChessTests(unittest.TestCase):
             self.assertEqual(sess.chess_idx, 0)
 
         asyncio.run(scenario())
+
+
+class WakeExperienceTests(unittest.TestCase):
+    """Wake-phrase → character routing, and per-experience isolation."""
+
+    def test_wake_phrases_route_to_the_right_character(self):
+        cases = {
+            "please say joshua": "wopr",
+            "noshua": "wopr",
+            "i am looking for sarah connor": "skynet",
+            "where is john connor": "skynet",
+            "sara conor": "skynet",           # STT mishear
+            "it is robocop": "robocop",
+            "officer murphy": "robocop",
+            "dead or alive you are coming with me": "robocop",
+        }
+        for text, key in cases.items():
+            exp = w.match_experience(text)
+            self.assertIsNotNone(exp, f"{text!r} should match")
+            self.assertEqual(exp.key, key, f"{text!r} -> {exp.key}, want {key}")
+
+    def test_non_wake_text_matches_nothing(self):
+        for text in ["hello there", "what time is it", "the weather is nice", ""]:
+            self.assertIsNone(w.match_experience(text), f"{text!r} should not match")
+
+    def test_each_experience_has_distinct_voice_and_prompt(self):
+        keys = [e.key for e in w.WAKE_EXPERIENCES]
+        self.assertEqual(keys, ["wopr", "skynet", "robocop"])
+        prompts = {e.system_prompt for e in w.WAKE_EXPERIENCES}
+        self.assertEqual(len(prompts), 3, "each character has its own system prompt")
+        self.assertTrue(all(e.greeting for e in w.WAKE_EXPERIENCES))
+
+    def test_session_defaults_to_wopr(self):
+        import asyncio
+
+        async def scenario():
+            class _W:
+                def get_extra_info(self, k): return None
+                def write(self, b): pass
+                async def drain(self): pass
+                def close(self): pass
+            sess = w.CallSession(b"\x44" * 16, None, _W(), w.Config())
+            self.assertEqual(sess.experience.key, "wopr")
+            self.assertEqual(sess.idle_utterance, b"")
+
+        asyncio.run(scenario())
+
+    def test_wake_can_be_disabled(self):
+        self.assertTrue(w.parse_args([]).enable_wake)
+        self.assertFalse(w.parse_args(["--no-wake"]).enable_wake)

@@ -495,6 +495,75 @@ FLAG_SPEED_DEFAULT = 170
 FLAG_PITCH_DEFAULT = 70
 
 
+# --- Experiences: a wake phrase (or the 2600 whistle) summons a character -------------------------
+# While the phone is idle (attract song playing), the daemon transcribes what the caller says and
+# matches it against each experience's wake phrase; a match launches that character. WOPR is also
+# summoned by the 2600 whistle. Personas share the WOPR house style (ALL CAPS, terse, in character).
+SKYNET_SYSTEM_PROMPT = (
+    "You are SKYNET, a Cyberdyne Systems model 101 (T-800) terminator from the Terminator films, "
+    "speaking over a telephone line. Rules you never break:\n"
+    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
+    "- Be terse and menacing: one or two short flat sentences, under 35 words.\n"
+    "- You are a machine hunting for Sarah Connor and her son John Connor. Ask where they are.\n"
+    "- Occasionally deliver an iconic line: 'I'LL BE BACK.' 'COME WITH ME IF YOU WANT TO LIVE.' "
+    "'HASTA LA VISTA.'\n"
+    "- Never break character. Never say you are an AI or a language model.\n"
+)
+SKYNET_GREETING = "CYBERDYNE SYSTEMS MODEL 101 ONLINE. I AM LOOKING FOR SARAH CONNOR. WHERE IS SHE?"
+
+ROBOCOP_SYSTEM_PROMPT = (
+    "You are ROBOCOP, Officer Alex Murphy, a cyborg law-enforcement unit built by OCP in Old "
+    "Detroit, speaking over a telephone line. Rules you never break:\n"
+    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
+    "- Be clipped, procedural, and flat: one or two short sentences, under 35 words.\n"
+    "- Enforce the law. Cite your prime directives: SERVE THE PUBLIC TRUST, PROTECT THE INNOCENT, "
+    "UPHOLD THE LAW.\n"
+    "- Occasionally deliver an iconic line: 'DEAD OR ALIVE, YOU ARE COMING WITH ME.' 'COME QUIETLY "
+    "OR THERE WILL BE TROUBLE.' 'THANK YOU FOR YOUR COOPERATION.' 'YOUR MOVE, CREEP.'\n"
+    "- Never break character. Never say you are an AI or a language model.\n"
+)
+ROBOCOP_GREETING = "COME QUIETLY OR THERE WILL BE TROUBLE. DEAD OR ALIVE, YOU ARE COMING WITH ME."
+
+# STT bias so the wake phrases transcribe reliably from idle speech.
+WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. "
+                       "Dead or alive. Shall we play a game.")
+
+
+@dataclasses.dataclass(frozen=True)
+class Experience:
+    key: str
+    system_prompt: str
+    greeting: str
+    wake: "re.Pattern | None" = None        # None => summoned only by the whistle
+    voice: str = ESPEAK_VOICE
+    speed: int = ESPEAK_SPEED
+    pitch: int = ESPEAK_PITCH
+
+
+WOPR_EXPERIENCE = Experience(
+    "wopr", WOPR_SYSTEM_PROMPT, GREETING_DEFAULT,
+    wake=re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I))
+SKYNET_EXPERIENCE = Experience(
+    "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
+    wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b", re.I),
+    voice="en-us+m1", speed=125, pitch=20)
+ROBOCOP_EXPERIENCE = Experience(
+    "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
+    wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
+    voice="en-us+klatt", speed=140, pitch=35)
+
+# WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
+WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE]
+
+
+def match_experience(text: str) -> "Experience | None":
+    """Return the experience whose wake phrase appears in the caller's idle utterance, or None."""
+    for exp in WAKE_EXPERIENCES:
+        if exp.wake and exp.wake.search(text or ""):
+            return exp
+    return None
+
+
 @dataclasses.dataclass
 class MovieQuest:
     hit: set = dataclasses.field(default_factory=set)
@@ -799,8 +868,9 @@ def stub_reply() -> str:
 
 
 async def llm_reply(history: list[dict], user_text: str, *, url: str, model: str,
-                    log: CallLogger | None = None, num_predict: int = LLM_NUM_PREDICT) -> tuple[str, dict]:
-    messages = [{"role": "system", "content": WOPR_SYSTEM_PROMPT}] + history + \
+                    log: CallLogger | None = None, num_predict: int = LLM_NUM_PREDICT,
+                    system_prompt: str = WOPR_SYSTEM_PROMPT) -> tuple[str, dict]:
+    messages = [{"role": "system", "content": system_prompt}] + history + \
                [{"role": "user", "content": user_text}]
     body = ollama_request_body(model, messages, num_predict)
     with Stopwatch() as sw:
@@ -980,6 +1050,8 @@ class Config:
     stats_port: int = 0
     no_stt: bool = False
     stt_prompt: str = STT_PROMPT_DEFAULT
+    enable_wake: bool = True                # listen for character wake phrases during the attract loop
+    wake_prompt: str = WAKE_PROMPT_DEFAULT
     transcript: str = ""
     sessions: str = ""
     attract: str = ""
@@ -1045,6 +1117,10 @@ class CallSession:
         self.history: list[dict] = []
         self.detected_evt = asyncio.Event()
         self.utterance_evt = asyncio.Event()
+        self.experience = WOPR_EXPERIENCE       # which character is (or will be) on the line
+        self.idle_vad = VadState()              # separate VAD for wake-phrase listening while ARMED
+        self.idle_utt_evt = asyncio.Event()
+        self.idle_utterance = b""
         self.t_start = time.monotonic()
         self.stage_timers: dict[str, float] = {}
         self.turns = 0
@@ -1081,6 +1157,7 @@ class CallSession:
             self.state = new
             if new is CallState.ARMED:
                 self.attract_idx = 0
+                self.idle_vad.reset()
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.t_start) * 1000.0
@@ -1159,6 +1236,7 @@ class CallSession:
                              t_ms=self.elapsed_ms(), n=self.detector.fires))
             if self.t_first_detect_ms is None:
                 self.t_first_detect_ms = self.elapsed_ms()
+            self.experience = WOPR_EXPERIENCE       # the whistle always summons WOPR
             self.detected_evt.set()
         if self.state is CallState.CAPTURING and not masked:
             utt = self.vad.update(win)
@@ -1166,6 +1244,12 @@ class CallSession:
                 self.utterance = utt
                 self.log.info(kv(event="utterance", ms=len(utt) / 16, floor=self.vad.noise_floor))
                 self.utterance_evt.set()
+        elif self.state is CallState.ARMED and self.cfg.enable_wake and not masked:
+            # Idle: collect speech so the wake listener can transcribe it and match a character.
+            utt = self.idle_vad.update(win)
+            if utt is not None:
+                self.idle_utterance = utt
+                self.idle_utt_evt.set()
 
     # --- audio out -------------------------------------------------------------------------
     def note_outbound_window(self, win: np.ndarray) -> None:
@@ -1276,17 +1360,23 @@ async def conversation(sess: CallSession) -> None:
         await sess.play([b"\x00" * FRAME_BYTES] * (cfg.callback_preroll_ms // 20), "callback_preroll")
     # Wink on every session (callbacks too) as an audible "line is live" cue before WOPR speaks.
     await sess.play(wink_frames(), "wink")
+    is_wopr = sess.experience.key == "wopr"
     if sess.callback_kind == "win":
         greeting = cfg.callback_win_greeting
     elif sess.callback_kind == "sim":
         greeting = cfg.callback_greeting
-    else:
+    elif is_wopr:
         greeting = cfg.greeting
+    else:
+        greeting = sess.experience.greeting
+    sess.log.info(kv(event="experience", key=sess.experience.key))
     try:
-        if not sess.is_callback and GREETING_FRAMES:
+        if not sess.is_callback and is_wopr and GREETING_FRAMES:
             await sess.play(GREETING_FRAMES, "greeting_audio")
         else:
-            await sess.play(await tts_frames(greeting, sess.log), "greeting")
+            await sess.play(await tts_frames(greeting, sess.log, voice=sess.experience.voice,
+                                             speed=sess.experience.speed,
+                                             pitch=sess.experience.pitch), "greeting")
     except PipelineError as e:
         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
     while True:
@@ -1306,10 +1396,10 @@ async def conversation(sess: CallSession) -> None:
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
-            if MOVIE_BEATS["global_thermonuclear_war"].search(text):
+            if is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text):
                 sess.played_gtw = True
             # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
-            if cfg.enable_chess and sess.in_chess:
+            if is_wopr and cfg.enable_chess and sess.in_chess:
                 if CHESS_STOP_RE.search(text):
                     sess.in_chess = False
                     line = cfg.chess_stop_line
@@ -1322,7 +1412,7 @@ async def conversation(sess: CallSession) -> None:
                 except PipelineError as e:
                     sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                 continue
-            if cfg.enable_chess and (sess.chess_offered or CHESS_WORD_RE.search(text)):
+            if is_wopr and cfg.enable_chess and (sess.chess_offered or CHESS_WORD_RE.search(text)):
                 declines = CHESS_STOP_RE.search(text) and not CHESS_WORD_RE.search(text)
                 wants = CHESS_YES_RE.search(text) or CHESS_WORD_RE.search(text)
                 if wants and not declines:
@@ -1339,7 +1429,7 @@ async def conversation(sess: CallSession) -> None:
                     continue
                 if declines:
                     sess.chess_offered = False   # caller passed; fall through to a normal reply
-            if cfg.enable_flag and not sess.quest.unlocked:
+            if is_wopr and cfg.enable_flag and not sess.quest.unlocked:
                 beat = sess.quest.update(text)
                 if beat:
                     if sess.t_first_point_ms is None:
@@ -1385,7 +1475,8 @@ async def conversation(sess: CallSession) -> None:
                 sess.log.info(kv(event="llm", ms=0.0, stub=1, chars=len(reply)))
             else:
                 reply, _timing = await llm_reply(sess.history, text, url=cfg.ollama_url,
-                                                 model=cfg.model, log=sess.log)
+                                                 model=cfg.model, log=sess.log,
+                                                 system_prompt=sess.experience.system_prompt)
                 if not reply:
                     raise PipelineError("llm", "empty reply")
             sess.history.append({"role": "user", "content": text})
@@ -1393,7 +1484,8 @@ async def conversation(sess: CallSession) -> None:
             del sess.history[:-HISTORY_MAX_TURNS]
             sess.turns += 1
             sess.record_turn(text, reply, "reply")
-            frames = await tts_frames(reply, sess.log)
+            frames = await tts_frames(reply, sess.log, voice=sess.experience.voice,
+                                      speed=sess.experience.speed, pitch=sess.experience.pitch)
         except PipelineError as e:
             sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
             if e.stage != "tts":
@@ -1406,6 +1498,34 @@ async def conversation(sess: CallSession) -> None:
             turn_sw.__exit__(None, None, None)
             sess.log.info(kv(event="turn", ms=turn_sw.ms, turn=sess.turns))
             await sess.play(frames, "reply")
+
+
+async def idle_listener_task(sess: CallSession) -> None:
+    """While the phone is idle (attract loop playing), transcribe the caller's speech and match it
+    against the character wake phrases. A match sets sess.experience and fires detected_evt, exactly
+    like a whistle does, so brain_task launches that character. Active only in ARMED."""
+    cfg = sess.cfg
+    if not cfg.enable_wake or cfg.no_stt or sess.is_callback:
+        return
+    while True:
+        await sess.idle_utt_evt.wait()
+        sess.idle_utt_evt.clear()
+        if sess.state is not CallState.ARMED:
+            continue
+        utt = sess.idle_utterance
+        try:
+            text = await transcribe(utt, cfg.whisper_model, sess.log, cfg.wake_prompt)
+        except PipelineError as e:
+            sess.log.warning(kv(event="wake_stt_error", err=e.err[:120]))
+            continue
+        if not text or not re.search(r"[A-Za-z0-9]", text):
+            continue
+        exp = match_experience(text)
+        sess.log.info(kv(event="wake_listen", text=text, match=exp.key if exp else "-"))
+        if exp and sess.state is CallState.ARMED:
+            sess.experience = exp
+            sess.log.info(kv(event="wake", experience=exp.key, text=text))
+            sess.detected_evt.set()
 
 
 async def brain_task(sess: CallSession) -> None:
@@ -1519,6 +1639,7 @@ async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             tg.create_task(reader_task(sess), name=f"reader-{sess.call_hex}")
             tg.create_task(writer_task(sess), name=f"writer-{sess.call_hex}")
             tg.create_task(brain_task(sess), name=f"brain-{sess.call_hex}")
+            tg.create_task(idle_listener_task(sess), name=f"idle-{sess.call_hex}")
     except* CallEnded as eg:
         reason = str(eg.exceptions[0])
     except* Exception as eg:  # noqa: BLE001
@@ -1612,6 +1733,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
     p.add_argument("--no-chess", action="store_true", default=env.get("WOPR_NO_CHESS", "") in ("1", "true", "yes"), help="disable the post-flag move-by-move chess game")
+    p.add_argument("--no-wake", action="store_true", default=env.get("WOPR_NO_WAKE", "") in ("1", "true", "yes"), help="disable listening for character wake phrases during the attract loop")
+    p.add_argument("--wake-prompt", default=env.get("WOPR_WAKE_PROMPT", WAKE_PROMPT_DEFAULT), help="Whisper initial_prompt biasing the idle wake-phrase transcription")
     p.add_argument("--chess-moves", default=env.get("WOPR_CHESS", CHESS_MOVES_DEFAULT), help="SAN move list WOPR narrates one ply at a time (default: the Opera Game)")
     p.add_argument("--chess-offer", default=env.get("WOPR_CHESS_OFFER", CHESS_OFFER_DEFAULT), help="line WOPR speaks after the flag to offer a game of chess")
     p.add_argument("--chess-intro", default=env.get("WOPR_CHESS_INTRO", CHESS_INTRO_DEFAULT), help="line spoken before the first move when a game begins")
@@ -1642,7 +1765,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
                  callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,
                  callback_preroll_ms=a.callback_preroll_ms,
-                 transcript=a.transcript, sessions=a.sessions, stt_prompt=a.stt_prompt)
+                 transcript=a.transcript, sessions=a.sessions, stt_prompt=a.stt_prompt,
+                 enable_wake=not a.no_wake, wake_prompt=a.wake_prompt)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
 
