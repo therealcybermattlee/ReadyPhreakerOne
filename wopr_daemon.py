@@ -525,6 +525,23 @@ ROBOCOP_SYSTEM_PROMPT = (
 )
 ROBOCOP_GREETING = "COME QUIETLY OR THERE WILL BE TROUBLE. DEAD OR ALIVE, YOU ARE COMING WITH ME."
 
+# The GREETER is the default host of the phone — it welcomes callers and routes them to the games.
+# It is NOT WOPR; WOPR is only one of the games it can hand you off to.
+GREETER_SYSTEM_PROMPT = (
+    "You are the GREETER, the friendly operator of a mysterious phone at GRRCON, a hacker "
+    "conference. You welcome hackers and help them choose an experience. Rules you never break:\n"
+    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
+    "- Be warm, playful, and brief: one or two short sentences, under 35 words.\n"
+    "- When asked what they can do or what the options are, give them the passphrases and let each "
+    "one reveal itself: WHISTLE 2600 HERTZ, OR SAY JOSHUA. SAY SARAH CONNOR OR JOHN CONNOR. SAY "
+    "ROBOCOP. OR SAY 'THE CAKE IS A LIE'. EACH SUMMONS SOMETHING DIFFERENT.\n"
+    "- Stay coy and mysterious about who or what answers; never name or role-play the characters "
+    "yourself. Let the caller discover them.\n"
+    "- Never say you are an AI or a language model. Stay the GREETER.\n"
+)
+GREETER_GREETING = ("GREETINGS, HACKER. I AM THE GREETER. WHAT WOULD YOU LIKE TO DO? "
+                    "ASK ME FOR YOUR OPTIONS, OR SAY A NAME.")
+
 # The menu prompt the caller hears on pickup (idle attract, looped). Synthesized at startup.
 MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. WHAT WOULD YOU LIKE TO DO TODAY?")
 
@@ -561,9 +578,14 @@ GLADOS_EXPERIENCE = Experience(
     "glados",
     wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
     song=True)
+# The greeter: the default host. Summonable by name/help so callers can ask what they can do.
+GREETER_EXPERIENCE = Experience(
+    "greeter", GREETER_SYSTEM_PROMPT, GREETER_GREETING,
+    wake=re.compile(r"\b(operator|greeter|help|menu|options|what can i do|what are my options)\b", re.I))
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
-WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, GLADOS_EXPERIENCE]
+WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE,
+                    GLADOS_EXPERIENCE, GREETER_EXPERIENCE]
 
 
 def match_experience(text: str) -> "Experience | None":
@@ -1130,7 +1152,8 @@ class CallSession:
         self.history: list[dict] = []
         self.detected_evt = asyncio.Event()
         self.utterance_evt = asyncio.Event()
-        self.experience = WOPR_EXPERIENCE       # which character is (or will be) on the line
+        self.experience = GREETER_EXPERIENCE    # default host; whistle/wake phrases summon the games
+        self.route_to: "Experience | None" = None   # greeter sets this to hand off to a game
         self.idle_vad = VadState()              # separate VAD for wake-phrase listening while ARMED
         self.idle_utt_evt = asyncio.Event()
         self.idle_utterance = b""
@@ -1149,6 +1172,8 @@ class CallSession:
         self.callback_kind = ("win" if call_id == CALLBACK_WIN_UUID
                                else "sim" if call_id == CALLBACK_UUID else None)
         self.is_callback = self.callback_kind is not None
+        if self.is_callback:
+            self.experience = WOPR_EXPERIENCE   # callbacks are a WOPR feature (Professor Falken)
         # A callback resumes the quest progress the caller had when they hung up, so someone who
         # was one line short of the flag can finish it when WOPR rings back.
         global _pending_quest
@@ -1417,6 +1442,13 @@ async def conversation(sess: CallSession) -> None:
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
+            if sess.experience.key == "greeter":
+                # The greeter is a router: a game passphrase hands the caller off to that game.
+                routed = match_experience(text)
+                if routed is not None and routed.key != "greeter":
+                    sess.log.info(kv(event="route", to=routed.key, text=text))
+                    sess.route_to = routed
+                    return
             if is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text):
                 sess.played_gtw = True
             # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
@@ -1580,6 +1612,18 @@ async def brain_task(sess: CallSession) -> None:
             exc = conv.exception()
             if exc and not isinstance(exc, asyncio.CancelledError):
                 sess.log.error(kv(event="conversation_crashed", err=f"{type(exc).__name__}: {exc}"[:200]))
+            if sess.route_to is not None:
+                # greeter handed off to a game: reset persona state and relaunch immediately
+                sess.experience = sess.route_to
+                sess.route_to = None
+                sess.history.clear()
+                sess.quest = MovieQuest()
+                sess.in_chess = False
+                sess.chess_idx = 0
+                sess.chess_offered = False
+                sess.set_state(CallState.ARMED)
+                sess.detected_evt.set()
+                continue
             sess.set_state(CallState.ARMED)
             continue
         # barge-in: whistle detected during conversation

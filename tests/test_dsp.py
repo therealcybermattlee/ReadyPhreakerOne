@@ -551,10 +551,10 @@ class WakeExperienceTests(unittest.TestCase):
 
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
-        self.assertEqual(keys, ["wopr", "skynet", "robocop", "glados"])
+        self.assertEqual(keys, ["wopr", "skynet", "robocop", "glados", "greeter"])
         chat = [e for e in w.WAKE_EXPERIENCES if not e.song]
         prompts = {e.system_prompt for e in chat}
-        self.assertEqual(len(prompts), 3, "each chat character has its own system prompt")
+        self.assertEqual(len(prompts), 4, "each chat character has its own system prompt")
         self.assertTrue(all(e.greeting for e in chat))
 
     def test_glados_is_a_song_experience(self):
@@ -567,7 +567,7 @@ class WakeExperienceTests(unittest.TestCase):
         self.assertIn("GRRCON", c.menu_greeting.upper())
         self.assertIn("HACKER", c.menu_greeting.upper())
 
-    def test_session_defaults_to_wopr(self):
+    def test_session_defaults_to_greeter_not_wopr(self):
         import asyncio
 
         async def scenario():
@@ -577,10 +577,20 @@ class WakeExperienceTests(unittest.TestCase):
                 async def drain(self): pass
                 def close(self): pass
             sess = w.CallSession(b"\x44" * 16, None, _W(), w.Config())
-            self.assertEqual(sess.experience.key, "wopr")
+            self.assertEqual(sess.experience.key, "greeter", "default host is the greeter")
+            self.assertIsNone(sess.route_to)
             self.assertEqual(sess.idle_utterance, b"")
+            # a callback, however, is a WOPR feature
+            cb = w.CallSession(w.CALLBACK_UUID, None, _W(), w.Config())
+            self.assertEqual(cb.experience.key, "wopr")
 
         asyncio.run(scenario())
+
+    def test_greeter_help_words_summon_the_greeter(self):
+        for t in ["operator", "i need help", "what can i do", "show me the menu", "options please"]:
+            m = w.match_experience(t)
+            self.assertIsNotNone(m, f"{t!r} should match")
+            self.assertEqual(m.key, "greeter", f"{t!r} -> {m.key}")
 
     def test_wake_can_be_disabled(self):
         self.assertTrue(w.parse_args([]).enable_wake)
