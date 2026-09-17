@@ -59,7 +59,7 @@ summonable and behaves per archetype; confirm no shared call-loop code changed t
 
 - [X] T009 [US1] Redefine `WOPR_EXPERIENCE` in `wopr_daemon.py` as a `quest=Quest(...)` carrying the existing four objectives (joshua/play/thermonuclear/winning-move), `ordered=False`, the current reveal line + `JOSHUA FIVE BY FIVE` flag, fanfare + Johnny-5 reveal voice + flag-intro clip; keep the whistle/Joshua entry and chess follow-on
 - [ ] T010 [P] [US1] Redefine `SKYNET_EXPERIENCE`, `ROBOCOP_EXPERIENCE`, `ET_EXPERIENCE` in `wopr_daemon.py` as quest games with placeholder single-objective quests (content finalized in US2) so they route through the quest path
-- [ ] T011 [P] [US1] Redefine `GLADOS_EXPERIENCE` and `TONYHAWK_EXPERIENCE` in `wopr_daemon.py` as `cutscene=Cutscene(...)` referencing the song/tonyhawk clips (message/end-call behavior finalized in US3; for now migrate current behavior)
+- [X] T011 [P] [US1] Redefine `GLADOS_EXPERIENCE` and `TONYHAWK_EXPERIENCE` in `wopr_daemon.py` as `cutscene=Cutscene(...)` referencing the song/tonyhawk clips (message/end-call behavior finalized in US3; for now migrate current behavior)
 - [X] T012 [US1] Ensure greeter/operator/goodbye remain utility (neither quest nor cutscene) and are excluded from games in `wopr_daemon.py`
 - [X] T013 [US1] Add a unit test in `tests/test_dsp.py` proving a minimal ad-hoc Game definition (one quest, one cutscene) validates and is selectable via `match_experience`, with no edits outside the definition
 - [X] T014 [US1] Update the roster/keys tests in `tests/test_dsp.py` to assert each game's `archetype` and that utilities are non-games
@@ -98,11 +98,11 @@ real objectives + flags with a proper reveal.
 **Independent Test**: GLaDOS = song→goodbye→hang up; Tony Hawk = clip→pep talk→goodbye→hang up; one
 teardown, recording + stats written.
 
-- [ ] T021 [US3] Implement `run_cutscene` fully in `wopr_daemon.py`: play `intro`+`clip`; then message per `message_mode` — `none` (skip), `fixed` (TTS `message_text` in game voice), `generated` (one `llm_reply` from `system_prompt`, fallback to `message_text` or skip on `PipelineError`); then goodbye clip; then `end_call`
-- [ ] T022 [US3] Wire `TONYHAWK_EXPERIENCE.cutscene` (`wopr_daemon.py`): clip `tonyhawk`, `message_mode="generated"`, fixed fallback pep-talk mentioning Patrick Garrity, goodbye on
-- [ ] T023 [US3] Wire `GLADOS_EXPERIENCE.cutscene` (`wopr_daemon.py`): clip `song`, `message_mode="none"`, goodbye on
-- [ ] T024 [US3] Verify `end_call` + `handle_call` teardown run exactly once (guard) and that MixMonitor recording + `write_session` still fire on a daemon-initiated hang-up; add a hang-up-mid-cutscene guard test in `tests/test_dsp.py` (mock writer)
-- [ ] T025 [P] [US3] Add unit tests in `tests/test_dsp.py` for the message-mode selection and fallback (none/fixed/generated→fallback) without invoking real TTS/LLM (inject stubs)
+- [X] T021 [US3] Implement `run_cutscene` fully in `wopr_daemon.py`: play `intro`+`clip`; then message per `message_mode` — `none` (skip), `fixed` (TTS `message_text` in game voice), `generated` (one `llm_reply` from `system_prompt`, fallback to `message_text` or skip on `PipelineError`); then goodbye clip; then `end_call`
+- [X] T022 [US3] Wire `TONYHAWK_EXPERIENCE.cutscene` (`wopr_daemon.py`): clip `tonyhawk`, `message_mode="generated"`, fixed fallback pep-talk mentioning Patrick Garrity, goodbye on
+- [X] T023 [US3] Wire `GLADOS_EXPERIENCE.cutscene` (`wopr_daemon.py`): clip `song`, `message_mode="none"`, goodbye on
+- [X] T024 [US3] Verify `end_call` + `handle_call` teardown run exactly once (guard) and that MixMonitor recording + `write_session` still fire on a daemon-initiated hang-up; add a hang-up-mid-cutscene guard test in `tests/test_dsp.py` (mock writer)
+- [X] T025 [P] [US3] Add unit tests in `tests/test_dsp.py` for the message-mode selection and fallback (none/fixed/generated→fallback) without invoking real TTS/LLM (inject stubs)
 
 **Checkpoint**: Cutscenes end the call cleanly with content; caller-hangup mid-cutscene is safe.
 
@@ -115,8 +115,8 @@ teardown, recording + stats written.
 **Independent Test**: After mixed calls, analytics show quest **wins** and cutscene **completions**
 per game, with no errors on legacy records.
 
-- [ ] T026 [US4] Extend `note_game()` and `metrics()` in `wopr_daemon.py` to set/emit `completed` for cutscenes (set at the end-call step) alongside `won`
-- [ ] T027 [US4] Extend `update_stats_db()` in `wopr_daemon.py` to increment a `completions` counter beside `wins` per game (absent → 0)
+- [X] T026 [US4] Extend `note_game()` and `metrics()` in `wopr_daemon.py` to set/emit `completed` for cutscenes (set at the end-call step) alongside `won`
+- [X] T027 [US4] Extend `update_stats_db()` in `wopr_daemon.py` to increment a `completions` counter beside `wins` per game (absent → 0)
 - [ ] T028 [P] [US4] Extend `analyze.py` per-game table to show a `completions` column beside `wins`, tolerant of records/aggregates lacking the field
 - [ ] T029 [P] [US4] Add unit tests in `tests/test_dsp.py` for `completed`/`completions` (quest→won, cutscene→completed) and legacy-record tolerance
 

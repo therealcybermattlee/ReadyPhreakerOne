@@ -604,9 +604,10 @@ class Quest:
 
 @dataclasses.dataclass(frozen=True)
 class Cutscene:
-    clip: str = ""                          # clip key to play (e.g. "song")
+    clip: str = ""                          # clip key to play (e.g. "song"); empty => intro clip only
     message_mode: str = "none"              # none | fixed | generated
     message_text: str = ""                  # the fixed line, or the fallback for a generated one
+    message_prompt: str = ""                # seed for a generated message (persona is system_prompt)
     goodbye: bool = True                    # play the shared goodbye sign-off before ending
 
 
@@ -657,19 +658,28 @@ ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
     voice="en-us+klatt", speed=133, pitch=30)  # processed, clipped, monotone
-# GLaDOS easter egg: saying the passphrase plays the "Still Alive" song (SONG_FRAMES), no LLM chat.
+# GLaDOS easter egg (cutscene): the passphrase plays "Still Alive", says goodbye, then hangs up.
 GLADOS_EXPERIENCE = Experience(
     "glados",
     wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
-    audio="song")
+    cutscene=Cutscene(clip="song", message_mode="none", goodbye=True))
 ET_EXPERIENCE = Experience(
     "et", ET_SYSTEM_PROMPT, ET_GREETING,
     wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|phone home)\b", re.I),
     voice="en-us+croak", speed=118, pitch=45)  # raspy, gravelly, childlike
+# Tony Hawk (cutscene): the "Do A Kickflip" intro clip -> one hyped robot pep talk -> goodbye -> hang up.
 TONYHAWK_EXPERIENCE = Experience(
     "tonyhawk", TONYHAWK_SYSTEM_PROMPT, TONYHAWK_GREETING,
     wake=re.compile(r"\b(kick\s?flip|tony hawk|ollie|do a kickflip)\b", re.I),
-    voice="en-us+m3", speed=165, pitch=55)     # hyped, upbeat human
+    voice="en-us+m3", speed=165, pitch=55,     # hyped, upbeat
+    cutscene=Cutscene(
+        clip="",                                # the DoAKickFlip audio plays as the tonyhawk intro clip
+        message_mode="generated",
+        message_prompt="Give the caller a short, hyped pep talk about landing their first kickflip, "
+                       "and tell them they can shred like Patrick Garrity.",
+        message_text="YOU CAN TOTALLY LAND THAT KICKFLIP. COMMIT, POP, FLICK, AND SEND IT. "
+                     "YOU COULD SHRED JUST LIKE PATRICK GARRITY.",   # fallback if generation fails
+        goodbye=True))
 # The greeter: default host. "operator"/"help" plays the hints clip, then returns to the menu.
 GREETER_EXPERIENCE = Experience(
     "greeter",
@@ -704,8 +714,12 @@ def validate_games(log) -> int:
             log.error(kv(event="game_invalid", key=exp.key, why="both quest and cutscene")); bad += 1
         if exp.quest is not None and not exp.quest.objectives:
             log.error(kv(event="game_invalid", key=exp.key, why="quest has no objectives")); bad += 1
-        if exp.cutscene is not None and not exp.cutscene.clip:
-            log.error(kv(event="game_invalid", key=exp.key, why="cutscene has no clip")); bad += 1
+        if exp.cutscene is not None:
+            cs = exp.cutscene
+            # a cutscene must produce something: a clip, a message, an intro (checked at play time),
+            # or at least the goodbye. Only a fully-empty cutscene is invalid.
+            if not cs.clip and cs.message_mode == "none" and not cs.goodbye:
+                log.error(kv(event="game_invalid", key=exp.key, why="cutscene produces nothing")); bad += 1
     return bad
 
 
@@ -1349,11 +1363,12 @@ class CallSession:
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.t_start) * 1000.0
 
-    def note_game(self, key: str, *, reached: bool = False, turn: bool = False,
-                  won: bool = False, clip: bool = False) -> None:
-        """Record engagement with one experience: reached (greeted/played), a chat turn, a win, or a clip."""
-        g = self.games.setdefault(key, {"reached": False, "turns": 0, "won": False,
-                                         "clip": False, "first_ms": round(self.elapsed_ms())})
+    def note_game(self, key: str, *, reached: bool = False, turn: bool = False, won: bool = False,
+                  clip: bool = False, completed: bool = False) -> None:
+        """Record engagement with one experience: reached (greeted/played), a chat turn, a quest win,
+        a clip, or a cutscene completed (played through to the end call)."""
+        g = self.games.setdefault(key, {"reached": False, "turns": 0, "won": False, "clip": False,
+                                        "completed": False, "first_ms": round(self.elapsed_ms())})
         if reached:
             g["reached"] = True
         if turn:
@@ -1362,6 +1377,8 @@ class CallSession:
             g["won"] = True
         if clip:
             g["clip"] = True
+        if completed:
+            g["completed"] = True
 
     def record_turn(self, user: str, wopr: str, kind: str) -> None:
         """Append one caller-utterance / WOPR-response pair to the JSONL dataset (best-effort)."""
@@ -1588,15 +1605,16 @@ async def run_cutscene(sess: CallSession) -> None:
         sess.log.warning(kv(event="clip_missing", audio=cs.clip))
     if cs.message_mode != "none":
         msg = None
-        if cs.message_mode == "generated":
+        if cs.message_mode == "generated" and not cfg.stub_llm:
             try:
-                msg, _ = await llm_reply([], cs.message_text or "Say your line.", url=cfg.ollama_url,
-                                         model=cfg.model, log=sess.log,
+                seed = cs.message_prompt or cs.message_text or "Say your line."
+                msg, _ = await llm_reply([], seed, url=cfg.ollama_url, model=cfg.model, log=sess.log,
                                          system_prompt=sess.experience.system_prompt)
-            except PipelineError:
+            except PipelineError as e:
+                sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:120]))
                 msg = None
         if not msg:
-            msg = cs.message_text
+            msg = cs.message_text            # fixed line, or the fallback for a failed generation
         if msg:
             try:
                 await sess.play(await tts_frames(msg, sess.log, voice=sess.experience.voice,
@@ -1613,6 +1631,7 @@ async def run_cutscene(sess: CallSession) -> None:
                 gframes = None
         if gframes:
             await sess.play(gframes, "goodbye")
+    sess.note_game(sess.experience.key, completed=True)   # played through to the end
     await end_call(sess)
 
 
@@ -1884,11 +1903,14 @@ def update_stats_db(path: str, m: dict, log: "CallLogger") -> None:
         for key, g in m.get("games", {}).items():
             if key not in GAME_KEYS:
                 continue
-            gs = db["games"].setdefault(key, {"sessions": 0, "turns": 0, "wins": 0, "clips": 0})
+            gs = db["games"].setdefault(key, {"sessions": 0, "turns": 0, "wins": 0,
+                                              "completions": 0, "clips": 0})
+            gs.setdefault("completions", 0)
             if g.get("reached") or g.get("clip"):
                 gs["sessions"] += 1
             gs["turns"] += g.get("turns", 0)
             gs["wins"] += 1 if g.get("won") else 0
+            gs["completions"] += 1 if g.get("completed") else 0
             gs["clips"] += 1 if g.get("clip") else 0
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

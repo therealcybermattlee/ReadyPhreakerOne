@@ -564,15 +564,17 @@ class WakeExperienceTests(unittest.TestCase):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
         self.assertEqual(keys, ["wopr", "skynet", "robocop", "et", "tonyhawk",
                                 "glados", "greeter", "goodbye"])
-        chat = [e for e in w.WAKE_EXPERIENCES if not e.audio]   # LLM chat characters
-        prompts = {e.system_prompt for e in chat}
-        self.assertEqual(len(prompts), 5, "each chat character has its own system prompt")
-        self.assertTrue(all(e.greeting for e in chat))
+        convo = [e for e in w.WAKE_EXPERIENCES if e.archetype in ("chat", "quest")]  # WOPR + chats
+        prompts = {e.system_prompt for e in convo}
+        self.assertEqual(len(prompts), 4, "wopr/skynet/robocop/et each have their own system prompt")
+        self.assertTrue(all(e.greeting for e in convo))
 
-    def test_glados_is_a_song_clip(self):
+    def test_glados_is_a_cutscene(self):
         g = w.match_experience("the cake is a lie")
         self.assertEqual(g.key, "glados")
-        self.assertEqual(g.audio, "song", "glados plays the song clip, not an LLM chat")
+        self.assertEqual(g.archetype, "cutscene")
+        self.assertEqual(g.cutscene.clip, "song")
+        self.assertEqual(g.cutscene.message_mode, "none")
 
     def test_greeter_is_an_operator_clip(self):
         g = w.match_experience("operator")
@@ -701,16 +703,16 @@ class GameFrameworkTests(unittest.TestCase):
         self.assertEqual(q.update("bravo"), "b")
         self.assertTrue(q.unlocked)
 
-    def test_wopr_is_a_quest_others_at_parity(self):
+    def test_archetypes(self):
         by_key = {e.key: e for e in w.WAKE_EXPERIENCES}
         self.assertEqual(by_key["wopr"].archetype, "quest")
         self.assertIs(by_key["wopr"].quest, w.WOPR_QUEST)
-        # parity: these keep their current shape in the MVP
         self.assertEqual(by_key["skynet"].archetype, "chat")
         self.assertEqual(by_key["robocop"].archetype, "chat")
         self.assertEqual(by_key["et"].archetype, "chat")
-        self.assertEqual(by_key["tonyhawk"].archetype, "chat")
-        self.assertEqual(by_key["glados"].archetype, "clip")
+        # US3: GLaDOS and Tony Hawk are cutscenes (play-and-close)
+        self.assertEqual(by_key["tonyhawk"].archetype, "cutscene")
+        self.assertEqual(by_key["glados"].archetype, "cutscene")
         # utilities are not games
         self.assertFalse(w.is_game("greeter"))
         self.assertFalse(w.is_game("goodbye"))
@@ -729,3 +731,80 @@ class GameFrameworkTests(unittest.TestCase):
 
     def test_shipped_roster_has_no_invalid_games(self):
         self.assertEqual(w.validate_games(w.get_logger("test")), 0)
+
+
+class CutsceneTests(unittest.TestCase):
+    """Spec 002 US3: cutscene play-and-close, end-call, and completion recording."""
+
+    def _sess(self, writes=None):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b):
+                if writes is not None:
+                    writes.append(b)
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(b"\x77" * 16, None, _W(), w.Config())
+
+    def test_end_call_sends_terminate_frame(self):
+        import asyncio
+
+        async def scenario():
+            writes = []
+            sess = self._sess(writes)
+            await w.end_call(sess)
+            self.assertIn(w.encode_frame(w.FrameType.TERMINATE), writes)
+
+        asyncio.run(scenario())
+
+    def test_end_call_safe_when_writer_broken(self):
+        import asyncio
+
+        async def scenario():
+            class _Broken:
+                def get_extra_info(self, k): return None
+                def write(self, b): raise ConnectionError("gone")
+                async def drain(self): pass
+                def close(self): pass
+            sess = w.CallSession(b"\x78" * 16, None, _Broken(), w.Config())
+            await w.end_call(sess)   # must not raise
+
+        asyncio.run(scenario())
+
+    def test_completed_recorded_in_metrics(self):
+        import asyncio
+
+        async def scenario():
+            sess = self._sess()
+            sess.note_game("glados", reached=True, clip=True, completed=True)
+            m = sess.metrics("eof")
+            self.assertTrue(m["games"]["glados"]["completed"])
+            self.assertIn("glados", m["games_played"])
+
+        asyncio.run(scenario())
+
+    def test_aggregate_counts_completions(self):
+        import asyncio, json, tempfile, os
+
+        async def scenario():
+            sess = self._sess()
+            sess.note_game("glados", reached=True, clip=True, completed=True)
+            m = sess.metrics("eof")
+            path = tempfile.mktemp(suffix=".json")
+            try:
+                w.update_stats_db(path, m, sess.log)
+                w.update_stats_db(path, m, sess.log)
+                db = json.load(open(path))
+            finally:
+                if os.path.exists(path):
+                    os.remove(path)
+            self.assertEqual(db["games"]["glados"]["completions"], 2)
+
+        asyncio.run(scenario())
+
+    def test_tonyhawk_cutscene_has_generated_message_and_fallback(self):
+        cs = {e.key: e for e in w.WAKE_EXPERIENCES}["tonyhawk"].cutscene
+        self.assertEqual(cs.message_mode, "generated")
+        self.assertIn("PATRICK GARRITY", cs.message_text)   # fallback line present
+        self.assertTrue(cs.message_prompt)                  # a generation seed exists
+        self.assertTrue(cs.goodbye)
