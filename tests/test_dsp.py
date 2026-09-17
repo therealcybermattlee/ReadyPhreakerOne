@@ -603,6 +603,60 @@ class WakeExperienceTests(unittest.TestCase):
             self.assertIsNotNone(m, f"{t!r} should match")
             self.assertEqual(m.key, "greeter", f"{t!r} -> {m.key}")
 
+
+class GameStatsTests(unittest.TestCase):
+    """Per-call game categorization and the running aggregate DB."""
+
+    def _sess(self):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b): pass
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(b"\x66" * 16, None, _W(), w.Config())
+
+    def test_metrics_categorize_games(self):
+        import asyncio
+
+        async def scenario():
+            s = self._sess()
+            s.note_game("et", reached=True)
+            s.note_game("et", turn=True)
+            s.note_game("wopr", reached=True)
+            s.note_game("wopr", won=True)
+            s.note_game("greeter", reached=True, clip=True)   # utility, excluded
+            m = s.metrics("eof")
+            self.assertEqual(m["games_played"], ["et", "wopr"])
+            self.assertIn("greeter", m["games"])                # tracked
+            self.assertNotIn("greeter", m["games_played"])      # but not counted as a game
+            self.assertTrue(m["reached_chat"])
+            self.assertTrue(m["games"]["wopr"]["won"])
+
+        asyncio.run(scenario())
+
+    def test_aggregate_db_accumulates(self):
+        import asyncio, json, tempfile, os
+
+        async def scenario():
+            s = self._sess()
+            s.note_game("tonyhawk", reached=True)
+            s.note_game("tonyhawk", turn=True)
+            s.note_game("tonyhawk", turn=True)
+            m = s.metrics("eof")
+            path = tempfile.mktemp(suffix=".json")
+            try:
+                w.update_stats_db(path, m, s.log)
+                w.update_stats_db(path, m, s.log)
+                db = json.load(open(path))
+            finally:
+                if os.path.exists(path):
+                    os.remove(path)
+            self.assertEqual(db["total_calls"], 2)
+            self.assertEqual(db["games"]["tonyhawk"]["sessions"], 2)
+            self.assertEqual(db["games"]["tonyhawk"]["turns"], 4)
+
+        asyncio.run(scenario())
+
     def test_wake_can_be_disabled(self):
         self.assertTrue(w.parse_args([]).enable_wake)
         self.assertFalse(w.parse_args(["--no-wake"]).enable_wake)

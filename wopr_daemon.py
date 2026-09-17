@@ -628,6 +628,10 @@ WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_E
                     TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
 
 
+# The playable games (for stats/categorization); the greeter and goodbye are host/utility, not games.
+GAME_KEYS = {e.key for e in WAKE_EXPERIENCES if e.key not in ("greeter", "goodbye")}
+
+
 def match_experience(text: str) -> "Experience | None":
     """Return the experience whose wake phrase appears in the caller's idle utterance, or None."""
     for exp in WAKE_EXPERIENCES:
@@ -1126,6 +1130,7 @@ class Config:
     wake_prompt: str = WAKE_PROMPT_DEFAULT
     transcript: str = ""
     sessions: str = ""
+    stats_db: str = ""     # JSON aggregate DB updated per call: per-game totals, wins, turns
     attract: str = ""
     menu_audio: str = ""                         # recorded menu-greeting WAV (looped); overrides menu_greeting
     menu_greeting: str = MENU_GREETING_DEFAULT   # synthesized idle prompt (fallback if no menu_audio)
@@ -1205,6 +1210,7 @@ class CallSession:
         self.t_start = time.monotonic()
         self.stage_timers: dict[str, float] = {}
         self.turns = 0
+        self.games: dict[str, dict] = {}   # experience key -> {reached, turns, won, clip, first_ms}
         self.windows_in = 0
         self.attract_idx = 0
         self.t_first_detect_ms: float | None = None   # ms from call start to first whistle
@@ -1245,6 +1251,20 @@ class CallSession:
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.t_start) * 1000.0
 
+    def note_game(self, key: str, *, reached: bool = False, turn: bool = False,
+                  won: bool = False, clip: bool = False) -> None:
+        """Record engagement with one experience: reached (greeted/played), a chat turn, a win, or a clip."""
+        g = self.games.setdefault(key, {"reached": False, "turns": 0, "won": False,
+                                         "clip": False, "first_ms": round(self.elapsed_ms())})
+        if reached:
+            g["reached"] = True
+        if turn:
+            g["turns"] += 1
+        if won:
+            g["won"] = True
+        if clip:
+            g["clip"] = True
+
     def record_turn(self, user: str, wopr: str, kind: str) -> None:
         """Append one caller-utterance / WOPR-response pair to the JSONL dataset (best-effort)."""
         if not self.cfg.transcript:
@@ -1284,19 +1304,28 @@ class CallSession:
             "whistle_hz_err": (round(self.whistle_hz - 2600.0, 1) if self.whistle_hz is not None else None),
             "whistle_hzs": [round(h, 1) for h in self.whistle_hzs],
             "turns": self.turns, "played_gtw": self.played_gtw, "reason": reason,
+            # --- which games were played, and how deeply ---
+            "games": self.games,
+            "games_played": sorted(k for k, v in self.games.items()
+                                   if k in GAME_KEYS and (v["reached"] or v["clip"])),
+            "primary_game": (max((k for k in self.games if k in GAME_KEYS),
+                                 key=lambda k: self.games[k]["turns"], default=None)),
+            "reached_chat": any(v["turns"] > 0 for k, v in self.games.items() if k in GAME_KEYS),
         }
 
     def write_session(self, reason: str) -> None:
         m = self.metrics(reason)
         self.log.info(kv(event="call_metrics", points=m["points"], whistled=int(m["whistled"]),
-                         attract_ms=m["attract_ms"], won=int(m["won"]), turns=m["turns"]))
-        if not self.cfg.sessions:
-            return
-        try:
-            with open(self.cfg.sessions, "a", encoding="utf-8") as f:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
-        except OSError as e:
-            self.log.warning(kv(event="sessions_failed", err=f"{type(e).__name__}: {e}"[:120]))
+                         attract_ms=m["attract_ms"], won=int(m["won"]), turns=m["turns"],
+                         games=",".join(m["games_played"]) or "-", primary=m["primary_game"] or "-"))
+        if self.cfg.sessions:
+            try:
+                with open(self.cfg.sessions, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(m, ensure_ascii=False) + "\n")
+            except OSError as e:
+                self.log.warning(kv(event="sessions_failed", err=f"{type(e).__name__}: {e}"[:120]))
+        if self.cfg.stats_db:
+            update_stats_db(self.cfg.stats_db, m, self.log)
 
     # --- audio in --------------------------------------------------------------------------
     def process_inbound_window(self, win: np.ndarray) -> None:
@@ -1441,6 +1470,7 @@ async def conversation(sess: CallSession) -> None:
         # A clip-experience (GLaDOS song, greeter hints, goodbye) plays audio, then returns to idle.
         kind = sess.experience.audio
         sess.log.info(kv(event="experience", key=sess.experience.key, audio=kind))
+        sess.note_game(sess.experience.key, reached=True, clip=True)
         clips = {"song": SONG_FRAMES, "operator": OPERATOR_FRAMES, "goodbye": GOODBYE_FRAMES}
         fallbacks = {"operator": cfg.operator_hints, "goodbye": cfg.goodbye_text}
         frames = clips.get(kind)
@@ -1470,6 +1500,7 @@ async def conversation(sess: CallSession) -> None:
     else:
         greeting = sess.experience.greeting
     sess.log.info(kv(event="experience", key=sess.experience.key))
+    sess.note_game(sess.experience.key, reached=True)
     intro = INTRO_FRAMES.get(sess.experience.key)
     if intro and not sess.is_callback:
         await sess.play(intro, f"intro:{sess.experience.key}")
@@ -1543,6 +1574,7 @@ async def conversation(sess: CallSession) -> None:
                         sess.t_win_ms = sess.elapsed_ms()
                     reveal = cfg.flag_text.replace("{flag}", cfg.flag)
                     sess.log.info(kv(event="flag_unlocked", flag=cfg.flag))
+                    sess.note_game("wopr", won=True)
                     sess.history.append({"role": "user", "content": text})
                     sess.history.append({"role": "assistant", "content": reveal})
                     del sess.history[:-HISTORY_MAX_TURNS]
@@ -1587,6 +1619,7 @@ async def conversation(sess: CallSession) -> None:
             del sess.history[:-HISTORY_MAX_TURNS]
             sess.turns += 1
             sess.record_turn(text, reply, "reply")
+            sess.note_game(sess.experience.key, turn=True)
             frames = await tts_frames(reply, sess.log, voice=sess.experience.voice,
                                       speed=sess.experience.speed, pitch=sess.experience.pitch)
         except PipelineError as e:
@@ -1671,6 +1704,40 @@ async def brain_task(sess: CallSession) -> None:
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         # loop: detected_evt is set → top of loop handles the restart
+
+
+def update_stats_db(path: str, m: dict, log: "CallLogger") -> None:
+    """Read-modify-write a JSON aggregate DB with this call's game engagement (best-effort).
+    Safe under asyncio: write_session runs synchronously in the event loop, so no concurrent RMW."""
+    try:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                db = json.load(f)
+        except (FileNotFoundError, ValueError):
+            db = {}
+        db.setdefault("total_calls", 0)
+        db.setdefault("callbacks", 0)
+        db.setdefault("games", {})
+        db["total_calls"] += 1
+        db["updated"] = m["ts"]
+        if m.get("callback"):
+            db["callbacks"] += 1
+        for key, g in m.get("games", {}).items():
+            if key not in GAME_KEYS:
+                continue
+            gs = db["games"].setdefault(key, {"sessions": 0, "turns": 0, "wins": 0, "clips": 0})
+            if g.get("reached") or g.get("clip"):
+                gs["sessions"] += 1
+            gs["turns"] += g.get("turns", 0)
+            gs["wins"] += 1 if g.get("won") else 0
+            gs["clips"] += 1 if g.get("clip") else 0
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+        log.info(kv(event="stats_db", total_calls=db["total_calls"], games=len(db["games"])))
+    except OSError as e:
+        log.warning(kv(event="stats_db_failed", err=f"{type(e).__name__}: {e}"[:120]))
 
 
 _pending_callbacks: set = set()
@@ -1860,6 +1927,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--callback-preroll-ms", type=int, default=int(env.get("WOPR_CALLBACK_PREROLL", "1200")), help="silence before a callback greeting so it isn't clipped while media comes up")
     p.add_argument("--transcript", default=env.get("WOPR_TRANSCRIPT", ""), help="append caller/WOPR turn pairs as JSONL to this file (dataset)")
     p.add_argument("--sessions", default=env.get("WOPR_SESSIONS", ""), help="append one per-call metrics record as JSONL to this file")
+    p.add_argument("--stats-db", default=env.get("WOPR_STATS_DB", ""), help="JSON aggregate DB updated every call: per-game session/turn/win totals")
     p.add_argument("--stt-prompt", default=env.get("WOPR_STT_PROMPT", STT_PROMPT_DEFAULT), help="Whisper initial_prompt to bias transcription toward the game vocabulary")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
@@ -1882,7 +1950,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  callback_cooldown=a.callback_cooldown, callback_greeting=a.callback_greeting,
                  callback_win_greeting=a.callback_win_greeting, callback_win_dial=a.callback_win_dial,
                  callback_preroll_ms=a.callback_preroll_ms,
-                 transcript=a.transcript, sessions=a.sessions, stt_prompt=a.stt_prompt,
+                 transcript=a.transcript, sessions=a.sessions, stats_db=a.stats_db, stt_prompt=a.stt_prompt,
                  enable_wake=not a.no_wake, wake_prompt=a.wake_prompt)
     cfg.check = a.check  # type: ignore[attr-defined]
     return cfg
