@@ -566,7 +566,7 @@ WOPR_EXPERIENCE = Experience(
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
     wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b", re.I),
-    voice="en-us+m1", speed=115, pitch=10)     # T-800: deep, slow, deliberate
+    voice="en-us+m1", speed=108, pitch=6)      # T-800: deepest, slowest, most deliberate
 ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
