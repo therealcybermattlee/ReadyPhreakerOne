@@ -278,6 +278,7 @@ GREETING_FRAMES: list[bytes] | None = None    # optional custom audio for the op
 SONG_FRAMES: list[bytes] | None = None         # song played by a song-experience (GLaDOS "Still Alive")
 OPERATOR_FRAMES: list[bytes] | None = None     # the greeter's "operator" hints clip (recorded); TTS if None
 GOODBYE_FRAMES: list[bytes] | None = None       # the "thanks for playing" sign-off clip (recorded); TTS if None
+INTRO_FRAMES: dict[str, list[bytes]] = {}       # per-character intro clip, keyed by experience key
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -1133,6 +1134,7 @@ class Config:
     operator_hints: str = OPERATOR_HINTS_DEFAULT
     goodbye_audio: str = ""                       # recorded "thanks for playing" WAV; TTS goodbye_text if unset
     goodbye_text: str = GOODBYE_TEXT_DEFAULT
+    intro_dir: str = ""                          # dir of per-character intro clips: <key>-intro.wav
     song: str = ""                               # WAV played by a song-experience (GLaDOS "Still Alive")
     flag_intro: str = ""
     greeting_audio: str = ""
@@ -1468,6 +1470,9 @@ async def conversation(sess: CallSession) -> None:
     else:
         greeting = sess.experience.greeting
     sess.log.info(kv(event="experience", key=sess.experience.key))
+    intro = INTRO_FRAMES.get(sess.experience.key)
+    if intro and not sess.is_callback:
+        await sess.play(intro, f"intro:{sess.experience.key}")
     try:
         if not sess.is_callback and is_wopr and GREETING_FRAMES:
             await sess.play(GREETING_FRAMES, "greeting_audio")
@@ -1826,6 +1831,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--operator-hints", default=env.get("WOPR_OPERATOR_HINTS", OPERATOR_HINTS_DEFAULT), help="TTS hints spoken on 'operator' when no --operator-audio clip is set")
     p.add_argument("--goodbye-audio", default=env.get("WOPR_GOODBYE_AUDIO", ""), help="recorded 'thanks for playing' WAV, played on bye/thanks; falls back to synthesized --goodbye-text")
     p.add_argument("--goodbye-text", default=env.get("WOPR_GOODBYE_TEXT", GOODBYE_TEXT_DEFAULT), help="TTS sign-off spoken on bye/thanks when no --goodbye-audio clip is set")
+    p.add_argument("--intro-dir", default=env.get("WOPR_INTRO_DIR", ""), help="directory of per-character intro clips named <key>-intro.wav (e.g. et-intro.wav), played before that character speaks")
     p.add_argument("--song", default=env.get("WOPR_SONG", ""), help="WAV played by a song-experience, e.g. GLaDOS 'Still Alive' on 'the cake is a lie'")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
     p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
@@ -1862,7 +1868,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
                  menu_audio=a.menu_audio, menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms,
                  operator_audio=a.operator_audio, operator_hints=a.operator_hints,
-                 goodbye_audio=a.goodbye_audio, goodbye_text=a.goodbye_text, song=a.song,
+                 goodbye_audio=a.goodbye_audio, goodbye_text=a.goodbye_text,
+                 intro_dir=a.intro_dir, song=a.song,
                  flag_intro=a.flag_intro,
                  greeting_audio=a.greeting_audio,
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
@@ -1886,7 +1893,7 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
-    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES, INTRO_FRAMES
     menu_pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
     if cfg.menu_audio:
         # Recorded menu greeting, looped with a trailing pause (highest precedence).
@@ -1925,6 +1932,18 @@ async def amain(cfg: Config) -> int:
                         sec=round(len(GOODBYE_FRAMES) * FRAME_PERIOD_S, 1)))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="goodbye_audio_failed", path=cfg.goodbye_audio, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.intro_dir:
+        # Per-character intro clip: <intro_dir>/<key>-intro.wav, played before that character speaks.
+        for exp in WAKE_EXPERIENCES:
+            path = os.path.join(cfg.intro_dir, f"{exp.key}-intro.wav")
+            if not os.path.isfile(path):
+                continue
+            try:
+                INTRO_FRAMES[exp.key] = load_attract(path, gain=1.0)
+                log.info(kv(event="intro", key=exp.key, path=path, frames=len(INTRO_FRAMES[exp.key]),
+                            sec=round(len(INTRO_FRAMES[exp.key]) * FRAME_PERIOD_S, 1)))
+            except (OSError, ValueError, wave.Error) as e:
+                log.error(kv(event="intro_failed", key=exp.key, path=path, err=f"{type(e).__name__}: {e}"[:150]))
     if cfg.song:
         try:
             SONG_FRAMES = load_attract(cfg.song, gain=1.0)   # full-volume song for song-experiences
