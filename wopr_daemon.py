@@ -276,6 +276,7 @@ ATTRACT_FRAMES: list[bytes] | None = None     # armed-state loop, loaded at star
 FLAG_INTRO_FRAMES: list[bytes] | None = None  # optional sampled clip played before the flag reveal
 GREETING_FRAMES: list[bytes] | None = None    # optional custom audio for the opening greeting
 SONG_FRAMES: list[bytes] | None = None         # song played by a song-experience (GLaDOS "Still Alive")
+OPERATOR_FRAMES: list[bytes] | None = None     # the greeter's "operator" hints clip (recorded); TTS if None
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -527,23 +528,17 @@ ROBOCOP_GREETING = "COME QUIETLY OR THERE WILL BE TROUBLE. DEAD OR ALIVE, YOU AR
 
 # The GREETER is the default host of the phone — it welcomes callers and routes them to the games.
 # It is NOT WOPR; WOPR is only one of the games it can hand you off to.
-GREETER_SYSTEM_PROMPT = (
-    "You are the GREETER, the friendly operator of a mysterious phone at GRRCON, a hacker "
-    "conference. You welcome hackers and help them choose an experience. Rules you never break:\n"
-    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
-    "- Be warm, playful, and brief: one or two short sentences, under 35 words.\n"
-    "- When asked what they can do or what the options are, give them the passphrases and let each "
-    "one reveal itself: WHISTLE 2600 HERTZ, OR SAY JOSHUA. SAY SARAH CONNOR OR JOHN CONNOR. SAY "
-    "ROBOCOP. OR SAY 'THE CAKE IS A LIE'. EACH SUMMONS SOMETHING DIFFERENT.\n"
-    "- Stay coy and mysterious about who or what answers; never name or role-play the characters "
-    "yourself. Let the caller discover them.\n"
-    "- Never say you are an AI or a language model. Stay the GREETER.\n"
+# The greeter is audio-only: a menu that loops on pickup and a hints clip on "operator". This is
+# the TTS fallback for the hints clip and the basis for the recording script.
+OPERATOR_HINTS_DEFAULT = (
+    "HERE IS WHAT YOU CAN DO. TO REACH A CERTAIN WAR COMPUTER, WHISTLE TWENTY SIX HUNDRED HERTZ, "
+    "OR SAY JOSHUA. SAY SARAH CONNOR, OR JOHN CONNOR. SAY ROBOCOP. OR SAY: THE CAKE IS A LIE. "
+    "GO ON. TRY ONE."
 )
-GREETER_GREETING = ("GREETINGS, HACKER. I AM THE GREETER. WHAT WOULD YOU LIKE TO DO? "
-                    "ASK ME FOR YOUR OPTIONS, OR SAY A NAME.")
 
-# The menu prompt the caller hears on pickup (idle attract, looped). Synthesized at startup.
-MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. WHAT WOULD YOU LIKE TO DO TODAY?")
+# The menu prompt the caller hears on pickup (idle attract, looped with a pause). Recorded WAV if
+# --menu-audio is set, else synthesized from this text.
+MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
 
 # STT bias so the wake phrases transcribe reliably from idle speech.
 WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
@@ -559,7 +554,7 @@ class Experience:
     voice: str = ESPEAK_VOICE
     speed: int = ESPEAK_SPEED
     pitch: int = ESPEAK_PITCH
-    song: bool = False                       # if True, playing this experience plays SONG_FRAMES
+    audio: str = ""                          # ""=LLM chat; "song"/"operator"=play a clip, then return
 
 
 WOPR_EXPERIENCE = Experience(
@@ -577,11 +572,12 @@ ROBOCOP_EXPERIENCE = Experience(
 GLADOS_EXPERIENCE = Experience(
     "glados",
     wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
-    song=True)
-# The greeter: the default host. Summonable by name/help so callers can ask what they can do.
+    audio="song")
+# The greeter: default host. "operator"/"help" plays the hints clip, then returns to the menu.
 GREETER_EXPERIENCE = Experience(
-    "greeter", GREETER_SYSTEM_PROMPT, GREETER_GREETING,
-    wake=re.compile(r"\b(operator|greeter|help|menu|options|what can i do|what are my options)\b", re.I))
+    "greeter",
+    wake=re.compile(r"\b(operator|greeter|help|menu|options|hints?|what can i do|what are my options)\b", re.I),
+    audio="operator")
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
 WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE,
@@ -1087,8 +1083,11 @@ class Config:
     transcript: str = ""
     sessions: str = ""
     attract: str = ""
-    menu_greeting: str = MENU_GREETING_DEFAULT   # spoken idle prompt (synthesized); overrides attract WAV
-    menu_gap_ms: int = 4000                      # silence after the menu prompt before it repeats
+    menu_audio: str = ""                         # recorded menu-greeting WAV (looped); overrides menu_greeting
+    menu_greeting: str = MENU_GREETING_DEFAULT   # synthesized idle prompt (fallback if no menu_audio)
+    menu_gap_ms: int = 10000                     # silence after the menu prompt before it repeats
+    operator_audio: str = ""                     # recorded "operator" hints WAV; TTS operator_hints if unset
+    operator_hints: str = OPERATOR_HINTS_DEFAULT
     song: str = ""                               # WAV played by a song-experience (GLaDOS "Still Alive")
     flag_intro: str = ""
     greeting_audio: str = ""
@@ -1153,7 +1152,6 @@ class CallSession:
         self.detected_evt = asyncio.Event()
         self.utterance_evt = asyncio.Event()
         self.experience = GREETER_EXPERIENCE    # default host; whistle/wake phrases summon the games
-        self.route_to: "Experience | None" = None   # greeter sets this to hand off to a game
         self.idle_vad = VadState()              # separate VAD for wake-phrase listening while ARMED
         self.idle_utt_evt = asyncio.Event()
         self.idle_utterance = b""
@@ -1392,13 +1390,20 @@ async def conversation(sess: CallSession) -> None:
     """One session: wink, greeting, then capture → STT → LLM → TTS → play, until cancelled."""
     cfg = sess.cfg
     sess.set_state(CallState.SPEAKING)
-    if sess.experience.song:
-        # A song-experience (GLaDOS "the cake is a lie") just plays the track, then returns to idle.
-        sess.log.info(kv(event="experience", key=sess.experience.key, song=1))
-        if SONG_FRAMES:
-            await sess.play(SONG_FRAMES, "song")
+    if sess.experience.audio:
+        # A clip-experience (GLaDOS song, or the greeter's operator hints) plays audio, then returns.
+        kind = sess.experience.audio
+        sess.log.info(kv(event="experience", key=sess.experience.key, audio=kind))
+        frames = SONG_FRAMES if kind == "song" else OPERATOR_FRAMES
+        if frames is None and kind == "operator":
+            try:
+                frames = await tts_frames(cfg.operator_hints, sess.log)   # TTS until a clip is recorded
+            except PipelineError as e:
+                sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:120]))
+        if frames:
+            await sess.play(frames, kind)
         else:
-            sess.log.warning(kv(event="song_missing", key=sess.experience.key))
+            sess.log.warning(kv(event="clip_missing", audio=kind))
         return
     if sess.is_callback and cfg.callback_preroll_ms > 0:
         # On an originated callback the media path to the payphone takes a beat to come up.
@@ -1442,13 +1447,6 @@ async def conversation(sess: CallSession) -> None:
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
-            if sess.experience.key == "greeter":
-                # The greeter is a router: a game passphrase hands the caller off to that game.
-                routed = match_experience(text)
-                if routed is not None and routed.key != "greeter":
-                    sess.log.info(kv(event="route", to=routed.key, text=text))
-                    sess.route_to = routed
-                    return
             if is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text):
                 sess.played_gtw = True
             # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
@@ -1612,18 +1610,6 @@ async def brain_task(sess: CallSession) -> None:
             exc = conv.exception()
             if exc and not isinstance(exc, asyncio.CancelledError):
                 sess.log.error(kv(event="conversation_crashed", err=f"{type(exc).__name__}: {exc}"[:200]))
-            if sess.route_to is not None:
-                # greeter handed off to a game: reset persona state and relaunch immediately
-                sess.experience = sess.route_to
-                sess.route_to = None
-                sess.history.clear()
-                sess.quest = MovieQuest()
-                sess.in_chess = False
-                sess.chess_idx = 0
-                sess.chess_offered = False
-                sess.set_state(CallState.ARMED)
-                sess.detected_evt.set()
-                continue
             sess.set_state(CallState.ARMED)
             continue
         # barge-in: whistle detected during conversation
@@ -1786,8 +1772,11 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--stats-port", type=int, default=int(env.get("WOPR_STATS_PORT", "0")))
     p.add_argument("--no-stt", action="store_true", help="do not load Whisper (detector-only runs); utterances are dropped")
     p.add_argument("--attract", default=env.get("WOPR_ATTRACT", ""), help="WAV looped to the caller while waiting for the whistle (any rate/mono/stereo 16-bit); default silence")
-    p.add_argument("--menu-greeting", default=env.get("WOPR_MENU_GREETING", MENU_GREETING_DEFAULT), help="spoken idle prompt heard on pickup, synthesized and looped; overrides --attract (empty to use the WAV)")
-    p.add_argument("--menu-gap-ms", type=int, default=int(env.get("WOPR_MENU_GAP_MS", "4000")), help="silence after the menu prompt before it repeats")
+    p.add_argument("--menu-audio", default=env.get("WOPR_MENU_AUDIO", ""), help="recorded menu-greeting WAV, looped with a gap; overrides --menu-greeting")
+    p.add_argument("--menu-greeting", default=env.get("WOPR_MENU_GREETING", MENU_GREETING_DEFAULT), help="synthesized idle prompt (fallback when --menu-audio is unset); looped; overrides --attract")
+    p.add_argument("--menu-gap-ms", type=int, default=int(env.get("WOPR_MENU_GAP_MS", "10000")), help="silence after the menu prompt before it repeats")
+    p.add_argument("--operator-audio", default=env.get("WOPR_OPERATOR_AUDIO", ""), help="recorded 'operator' hints WAV; falls back to synthesized --operator-hints")
+    p.add_argument("--operator-hints", default=env.get("WOPR_OPERATOR_HINTS", OPERATOR_HINTS_DEFAULT), help="TTS hints spoken on 'operator' when no --operator-audio clip is set")
     p.add_argument("--song", default=env.get("WOPR_SONG", ""), help="WAV played by a song-experience, e.g. GLaDOS 'Still Alive' on 'the cake is a lie'")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
     p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
@@ -1822,7 +1811,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
-                 menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms, song=a.song,
+                 menu_audio=a.menu_audio, menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms,
+                 operator_audio=a.operator_audio, operator_hints=a.operator_hints, song=a.song,
                  flag_intro=a.flag_intro,
                  greeting_audio=a.greeting_audio,
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
@@ -1846,24 +1836,38 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
-    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES
-    if cfg.menu_greeting:
-        # Spoken idle prompt heard on pickup, looped with a trailing pause. Overrides the WAV attract.
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES
+    menu_pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
+    if cfg.menu_audio:
+        # Recorded menu greeting, looped with a trailing pause (highest precedence).
         try:
-            spoken = await tts_frames(cfg.menu_greeting, log)
-            pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
-            ATTRACT_FRAMES = spoken + pad
+            ATTRACT_FRAMES = load_attract(cfg.menu_audio, gain=1.0) + menu_pad
+            log.info(kv(event="menu_audio", path=cfg.menu_audio, frames=len(ATTRACT_FRAMES),
+                        sec=round(len(ATTRACT_FRAMES) * FRAME_PERIOD_S, 1)))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="menu_audio_failed", path=cfg.menu_audio, err=f"{type(e).__name__}: {e}"[:150]))
+    if ATTRACT_FRAMES is None and cfg.menu_greeting:
+        # Synthesized idle prompt (fallback until the recorded clip is supplied).
+        try:
+            ATTRACT_FRAMES = (await tts_frames(cfg.menu_greeting, log)) + menu_pad
             log.info(kv(event="menu_greeting", chars=len(cfg.menu_greeting),
                         frames=len(ATTRACT_FRAMES), sec=round(len(ATTRACT_FRAMES) * FRAME_PERIOD_S, 1)))
         except PipelineError as e:
             log.error(kv(event="menu_greeting_failed", err=e.err[:150]))
-    elif cfg.attract:
+    if ATTRACT_FRAMES is None and cfg.attract:
         try:
             ATTRACT_FRAMES = load_attract(cfg.attract)
             log.info(kv(event="attract", path=cfg.attract, frames=len(ATTRACT_FRAMES),
                         sec=len(ATTRACT_FRAMES) * FRAME_PERIOD_S))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="attract_failed", path=cfg.attract, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.operator_audio:
+        try:
+            OPERATOR_FRAMES = load_attract(cfg.operator_audio, gain=1.0)   # recorded hints clip
+            log.info(kv(event="operator_audio", path=cfg.operator_audio, frames=len(OPERATOR_FRAMES),
+                        sec=round(len(OPERATOR_FRAMES) * FRAME_PERIOD_S, 1)))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="operator_audio_failed", path=cfg.operator_audio, err=f"{type(e).__name__}: {e}"[:150]))
     if cfg.song:
         try:
             SONG_FRAMES = load_attract(cfg.song, gain=1.0)   # full-volume song for song-experiences

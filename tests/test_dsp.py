@@ -552,15 +552,20 @@ class WakeExperienceTests(unittest.TestCase):
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
         self.assertEqual(keys, ["wopr", "skynet", "robocop", "glados", "greeter"])
-        chat = [e for e in w.WAKE_EXPERIENCES if not e.song]
+        chat = [e for e in w.WAKE_EXPERIENCES if not e.audio]   # LLM chat characters
         prompts = {e.system_prompt for e in chat}
-        self.assertEqual(len(prompts), 4, "each chat character has its own system prompt")
+        self.assertEqual(len(prompts), 3, "each chat character has its own system prompt")
         self.assertTrue(all(e.greeting for e in chat))
 
-    def test_glados_is_a_song_experience(self):
+    def test_glados_is_a_song_clip(self):
         g = w.match_experience("the cake is a lie")
         self.assertEqual(g.key, "glados")
-        self.assertTrue(g.song, "glados plays a song, not an LLM chat")
+        self.assertEqual(g.audio, "song", "glados plays the song clip, not an LLM chat")
+
+    def test_greeter_is_an_operator_clip(self):
+        g = w.match_experience("operator")
+        self.assertEqual(g.key, "greeter")
+        self.assertEqual(g.audio, "operator", "greeter plays the hints clip, not an LLM chat")
 
     def test_menu_greeting_is_the_default_idle_prompt(self):
         c = w.parse_args([])
@@ -578,7 +583,6 @@ class WakeExperienceTests(unittest.TestCase):
                 def close(self): pass
             sess = w.CallSession(b"\x44" * 16, None, _W(), w.Config())
             self.assertEqual(sess.experience.key, "greeter", "default host is the greeter")
-            self.assertIsNone(sess.route_to)
             self.assertEqual(sess.idle_utterance, b"")
             # a callback, however, is a WOPR feature
             cb = w.CallSession(w.CALLBACK_UUID, None, _W(), w.Config())
