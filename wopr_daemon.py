@@ -277,6 +277,7 @@ FLAG_INTRO_FRAMES: list[bytes] | None = None  # optional sampled clip played bef
 GREETING_FRAMES: list[bytes] | None = None    # optional custom audio for the opening greeting
 SONG_FRAMES: list[bytes] | None = None         # song played by a song-experience (GLaDOS "Still Alive")
 OPERATOR_FRAMES: list[bytes] | None = None     # the greeter's "operator" hints clip (recorded); TTS if None
+GOODBYE_FRAMES: list[bytes] | None = None       # the "thanks for playing" sign-off clip (recorded); TTS if None
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -535,6 +536,8 @@ OPERATOR_HINTS_DEFAULT = (
     "OR SAY JOSHUA. SAY SARAH CONNOR, OR JOHN CONNOR. SAY ROBOCOP. OR SAY: THE CAKE IS A LIE. "
     "GO ON. TRY ONE."
 )
+# TTS fallback for the "goodbye" sign-off clip (played when the caller says bye/thanks).
+GOODBYE_TEXT_DEFAULT = "THANKS FOR PLAYING, HACKER. COME BACK SOON."
 
 # The menu prompt the caller hears on pickup (idle attract, looped with a pause). Recorded WAV if
 # --menu-audio is set, else synthesized from this text.
@@ -563,11 +566,11 @@ WOPR_EXPERIENCE = Experience(
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
     wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b", re.I),
-    voice="en-us+m1", speed=125, pitch=20)
+    voice="en-us+m1", speed=115, pitch=10)     # T-800: deep, slow, deliberate
 ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
-    voice="en-us+klatt", speed=140, pitch=35)
+    voice="en-us+klatt", speed=133, pitch=30)  # processed, clipped, monotone
 # GLaDOS easter egg: saying the passphrase plays the "Still Alive" song (SONG_FRAMES), no LLM chat.
 GLADOS_EXPERIENCE = Experience(
     "glados",
@@ -578,10 +581,15 @@ GREETER_EXPERIENCE = Experience(
     "greeter",
     wake=re.compile(r"\b(operator|greeter|help|menu|options|hints?|what can i do|what are my options)\b", re.I),
     audio="operator")
+# Sign-off: saying bye/thanks plays the "thanks for playing" clip, then returns to the menu.
+GOODBYE_EXPERIENCE = Experience(
+    "goodbye",
+    wake=re.compile(r"\b(good\s?bye|bye|thank you|thanks|hang up|i'?m done|see you|so long)\b", re.I),
+    audio="goodbye")
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
 WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE,
-                    GLADOS_EXPERIENCE, GREETER_EXPERIENCE]
+                    GLADOS_EXPERIENCE, GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
 
 
 def match_experience(text: str) -> "Experience | None":
@@ -1088,6 +1096,8 @@ class Config:
     menu_gap_ms: int = 10000                     # silence after the menu prompt before it repeats
     operator_audio: str = ""                     # recorded "operator" hints WAV; TTS operator_hints if unset
     operator_hints: str = OPERATOR_HINTS_DEFAULT
+    goodbye_audio: str = ""                       # recorded "thanks for playing" WAV; TTS goodbye_text if unset
+    goodbye_text: str = GOODBYE_TEXT_DEFAULT
     song: str = ""                               # WAV played by a song-experience (GLaDOS "Still Alive")
     flag_intro: str = ""
     greeting_audio: str = ""
@@ -1391,13 +1401,15 @@ async def conversation(sess: CallSession) -> None:
     cfg = sess.cfg
     sess.set_state(CallState.SPEAKING)
     if sess.experience.audio:
-        # A clip-experience (GLaDOS song, or the greeter's operator hints) plays audio, then returns.
+        # A clip-experience (GLaDOS song, greeter hints, goodbye) plays audio, then returns to idle.
         kind = sess.experience.audio
         sess.log.info(kv(event="experience", key=sess.experience.key, audio=kind))
-        frames = SONG_FRAMES if kind == "song" else OPERATOR_FRAMES
-        if frames is None and kind == "operator":
+        clips = {"song": SONG_FRAMES, "operator": OPERATOR_FRAMES, "goodbye": GOODBYE_FRAMES}
+        fallbacks = {"operator": cfg.operator_hints, "goodbye": cfg.goodbye_text}
+        frames = clips.get(kind)
+        if frames is None and kind in fallbacks:
             try:
-                frames = await tts_frames(cfg.operator_hints, sess.log)   # TTS until a clip is recorded
+                frames = await tts_frames(fallbacks[kind], sess.log)   # TTS until a clip is recorded
             except PipelineError as e:
                 sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:120]))
         if frames:
@@ -1777,6 +1789,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--menu-gap-ms", type=int, default=int(env.get("WOPR_MENU_GAP_MS", "10000")), help="silence after the menu prompt before it repeats")
     p.add_argument("--operator-audio", default=env.get("WOPR_OPERATOR_AUDIO", ""), help="recorded 'operator' hints WAV; falls back to synthesized --operator-hints")
     p.add_argument("--operator-hints", default=env.get("WOPR_OPERATOR_HINTS", OPERATOR_HINTS_DEFAULT), help="TTS hints spoken on 'operator' when no --operator-audio clip is set")
+    p.add_argument("--goodbye-audio", default=env.get("WOPR_GOODBYE_AUDIO", ""), help="recorded 'thanks for playing' WAV, played on bye/thanks; falls back to synthesized --goodbye-text")
+    p.add_argument("--goodbye-text", default=env.get("WOPR_GOODBYE_TEXT", GOODBYE_TEXT_DEFAULT), help="TTS sign-off spoken on bye/thanks when no --goodbye-audio clip is set")
     p.add_argument("--song", default=env.get("WOPR_SONG", ""), help="WAV played by a song-experience, e.g. GLaDOS 'Still Alive' on 'the cake is a lie'")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
     p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
@@ -1812,7 +1826,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
                  menu_audio=a.menu_audio, menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms,
-                 operator_audio=a.operator_audio, operator_hints=a.operator_hints, song=a.song,
+                 operator_audio=a.operator_audio, operator_hints=a.operator_hints,
+                 goodbye_audio=a.goodbye_audio, goodbye_text=a.goodbye_text, song=a.song,
                  flag_intro=a.flag_intro,
                  greeting_audio=a.greeting_audio,
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
@@ -1836,7 +1851,7 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
-    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES
     menu_pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
     if cfg.menu_audio:
         # Recorded menu greeting, looped with a trailing pause (highest precedence).
@@ -1868,6 +1883,13 @@ async def amain(cfg: Config) -> int:
                         sec=round(len(OPERATOR_FRAMES) * FRAME_PERIOD_S, 1)))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="operator_audio_failed", path=cfg.operator_audio, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.goodbye_audio:
+        try:
+            GOODBYE_FRAMES = load_attract(cfg.goodbye_audio, gain=1.0)   # recorded sign-off clip
+            log.info(kv(event="goodbye_audio", path=cfg.goodbye_audio, frames=len(GOODBYE_FRAMES),
+                        sec=round(len(GOODBYE_FRAMES) * FRAME_PERIOD_S, 1)))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="goodbye_audio_failed", path=cfg.goodbye_audio, err=f"{type(e).__name__}: {e}"[:150]))
     if cfg.song:
         try:
             SONG_FRAMES = load_attract(cfg.song, gain=1.0)   # full-volume song for song-experiences

@@ -5,7 +5,7 @@ GRRCon — a mysterious phone hackers pick up. You're the friendly, slightly-con
 operator who welcomes them and hints at what they can do. Think **1980s phone operator meets
 game-show host**, warm and a little mysterious.
 
-Two short clips. That's it.
+Three short clips. That's it.
 
 ---
 
@@ -19,7 +19,7 @@ Two short clips. That's it.
   good (they help pacing) — see the `/` marks.
 - Because it ends up as 8 kHz phone audio, **enunciate a little more than normal** and don't
   drop to a whisper. Punchy and clear beats subtle.
-- One clean take each is all we need. Send them as **`menu.wav`** and **`operator.wav`**.
+- One clean take each is all we need. Send them as **`menu.wav`**, **`operator.wav`**, and **`goodbye.wav`**.
 
 ---
 
@@ -47,6 +47,17 @@ passphrases without spoiling what each one summons. Let the mystery hang.
 *Direction:* conspiratorial, like you're slipping them secret codes. Slow down and land each
 passphrase clearly — people will be repeating them back into the phone, so **Joshua**, **Sarah
 Connor**, **John Connor**, **RoboCop**, and **the cake is a lie** must be crisp.
+
+---
+
+## Clip 3 — `goodbye.wav`  (the sign-off)
+
+This plays when the caller says **"goodbye"**, **"bye"**, or **"thanks."** A warm send-off.
+
+> **"Thanks for playing, hacker. / Come back soon."**
+
+*Direction:* friendly and genuine — like an operator wishing them well as they hang up. Feel free
+to make it your own (a wink, a "stay curious," whatever fits your delivery).
 
 ---
 
