@@ -604,11 +604,16 @@ class WakeExperienceTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
-    def test_greeter_help_words_summon_the_greeter(self):
-        for t in ["operator", "i need help", "what can i do", "show me the menu", "options please"]:
+    def test_operator_summons_the_greeter(self):
+        for t in ["operator", "operator please", "get me the operator", "the operator", "main menu"]:
             m = w.match_experience(t)
             self.assertIsNotNone(m, f"{t!r} should match")
             self.assertEqual(m.key, "greeter", f"{t!r} -> {m.key}")
+
+    def test_menu_greeting_words_do_not_self_trigger_the_greeter(self):
+        # the menu greeting bleeds into the mouthpiece; none of its words may summon the operator
+        for t in ["how may i help you", "hello hacker", "welcome to grrcon", "i need help"]:
+            self.assertIsNone(w.match_experience(t), f"{t!r} must NOT match (menu sidetone)")
 
 
 class GameStatsTests(unittest.TestCase):

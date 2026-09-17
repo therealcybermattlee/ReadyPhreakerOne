@@ -348,6 +348,7 @@ async def read_frame(reader: asyncio.StreamReader) -> tuple[int, bytes]:
 
 
 SILENCE_FRAME = encode_frame(FrameType.AUDIO, b"\x00" * FRAME_BYTES)
+_ATTRACT_SILENCE = b"\x00" * FRAME_BYTES        # a silent attract/menu frame (the pad between repeats)
 
 
 class CallEnded(Exception):
@@ -680,10 +681,13 @@ TONYHAWK_EXPERIENCE = Experience(
         message_text="YOU CAN TOTALLY LAND THAT KICKFLIP. COMMIT, POP, FLICK, AND SEND IT. "
                      "YOU COULD SHRED JUST LIKE PATRICK GARRITY.",   # fallback if generation fails
         goodbye=True))
-# The greeter: default host. "operator"/"help" plays the hints clip, then returns to the menu.
+# The greeter: default host. "operator" plays the hints clip, then returns to the menu.
+# NB: keep these wake words OUT of the menu greeting text — the menu bleeds into the mouthpiece as
+# sidetone, and any menu word here would self-trigger the operator. ("help" was removed for exactly
+# that reason: the menu says "how may I help you".)
 GREETER_EXPERIENCE = Experience(
     "greeter",
-    wake=re.compile(r"\b(operator|greeter|help|menu|options|hints?|what can i do|what are my options)\b", re.I),
+    wake=re.compile(r"\b(operator|the operator|main menu|list of options)\b", re.I),
     audio="operator")
 # Sign-off: saying bye/thanks plays the "thanks for playing" clip, then returns to the menu.
 GOODBYE_EXPERIENCE = Experience(
@@ -1318,6 +1322,8 @@ class CallSession:
         self.idle_vad = VadState()              # separate VAD for wake-phrase listening while ARMED
         self.idle_utt_evt = asyncio.Event()
         self.idle_utterance = b""
+        self.attract_speaking_until = 0.0       # menu audio is playing until this monotonic time;
+        #                                         its sidetone must not reach the wake listener
         self.t_start = time.monotonic()
         self.stage_timers: dict[str, float] = {}
         self.turns = 0
@@ -1472,11 +1478,16 @@ class CallSession:
                 self.log.info(kv(event="utterance", ms=len(utt) / 16, floor=self.vad.noise_floor))
                 self.utterance_evt.set()
         elif self.state is CallState.ARMED and self.cfg.enable_wake and not masked:
-            # Idle: collect speech so the wake listener can transcribe it and match a character.
-            utt = self.idle_vad.update(win)
-            if utt is not None:
-                self.idle_utterance = utt
-                self.idle_utt_evt.set()
+            # Idle: collect the caller's speech for the wake listener — but NOT while the menu is
+            # playing, or its sidetone (the menu bleeding into the mouthpiece) would be transcribed
+            # and could self-trigger a game. Listen only in the gaps between menu repeats.
+            if time.monotonic() < self.attract_speaking_until:
+                self.idle_vad.reset()
+            else:
+                utt = self.idle_vad.update(win)
+                if utt is not None:
+                    self.idle_utterance = utt
+                    self.idle_utt_evt.set()
 
     # --- audio out -------------------------------------------------------------------------
     def note_outbound_window(self, win: np.ndarray) -> None:
@@ -1559,6 +1570,10 @@ async def writer_task(sess: CallSession) -> None:
         if frame_body is None and sess.state is CallState.ARMED and ATTRACT_FRAMES:
             frame_body = ATTRACT_FRAMES[sess.attract_idx % len(ATTRACT_FRAMES)]
             sess.attract_idx += 1
+            # While the menu is actually speaking (non-silent frame), hold off the wake listener so
+            # its sidetone isn't transcribed. The silence-pad frames between repeats leave it open.
+            if frame_body != _ATTRACT_SILENCE:
+                sess.attract_speaking_until = time.monotonic() + 0.3
         if frame_body is None:
             sess.writer.write(SILENCE_FRAME)
             sess.echo_ring.append(False)
