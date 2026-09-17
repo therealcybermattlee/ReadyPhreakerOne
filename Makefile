@@ -1,8 +1,8 @@
-# CrunchWhistle — all mini-side work runs over SSH. Set MINI=<ssh alias> in .env.local
+# ReadyPhreakerOne — all mini-side work runs over SSH. Set MINI=<ssh alias> in .env.local
 -include .env.local
 export MINI
 
-REMOTE_DIR := ~/CrunchWhistle
+REMOTE_DIR := ~/ReadyPhreakerOne
 REMOTE_ENV := export PATH=/opt/homebrew/bin:$$PATH
 DEV_PORT   := 9093
 PROD_PORT  := 9092

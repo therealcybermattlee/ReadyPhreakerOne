@@ -1,4 +1,4 @@
-# CrunchWhistle — Greeter Voice Recording Script
+# ReadyPhreakerOne — Greeter Voice Recording Script
 
 Thanks for lending your voice! This is the **greeter** for a payphone art installation at
 GRRCon — a mysterious phone hackers pick up. You're the friendly, slightly-conspiratorial

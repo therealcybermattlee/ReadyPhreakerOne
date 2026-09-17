@@ -1,4 +1,4 @@
-# Grandstream HT802 settings for the CrunchWhistle payphone
+# Grandstream HT802 settings for the ReadyPhreakerOne payphone
 
 Apply these through the ATA's web interface (`http://<ata-ip>`, admin login). Everything is on
 **FXS Port 1** unless noted. Settings not listed keep their defaults. After **Apply** on each

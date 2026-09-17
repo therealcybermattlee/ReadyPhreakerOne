@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-analyze.py — the "human experiment" data study for CrunchWhistle.
+analyze.py — the "human experiment" data study for ReadyPhreakerOne.
 
 Reads the per-call metrics (sessions.jsonl, written by the daemon) and the turn transcripts
 (dataset.jsonl) and produces:

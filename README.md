@@ -1,8 +1,9 @@
-# CrunchWhistle — 2600 Hz whistle → WOPR
+# ReadyPhreakerOne — a phreaking payphone full of movie AIs
 
-A phone-phreaking homage. Lift the handset of a coin-op payphone, hear nothing but line silence,
-whistle 2600 Hz, and the line *winks*. Then a flat, synthetic computer voice says
-**GREETINGS. THIS IS WOPR.** and WOPR from *WarGames* wants to play a game.
+A phone-phreaking homage. Lift the handset of a coin-op payphone and a greeter welcomes you:
+**"HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?"** Say a passphrase — or whistle 2600 Hz —
+and a character from the movies answers: WOPR from *WarGames*, Skynet, RoboCop, E.T., Tony Hawk, or
+GLaDOS. Each is a live local-LLM conversation in its own voice.
 
 Everything runs on one headless Apple Silicon Mac mini: Asterisk (built from source), the
 AudioSocket daemon, local speech recognition, a retro DECtalk-style synthesized voice, and a local
@@ -64,7 +65,7 @@ PATH; every Makefile target exports it.
 
 | Target | Does |
 |---|---|
-| `make sync` | rsync the tree to `~/CrunchWhistle` on the mini |
+| `make sync` | rsync the tree to `~/ReadyPhreakerOne` on the mini |
 | `make probe` | read-only hardware/software facts |
 | `make test` / `make local-test` | unit tests on the mini / here |
 | `make harness` / `make local-harness` | start a stub daemon on 9093 (under `caffeinate`), synth clips, run the full harness |
