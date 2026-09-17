@@ -812,4 +812,17 @@ class CutsceneTests(unittest.TestCase):
         self.assertEqual(cs.message_mode, "generated")
         self.assertIn("PATRICK GARRITY", cs.message_text)   # fallback line present
         self.assertTrue(cs.message_prompt)                  # a generation seed exists
-        self.assertTrue(cs.goodbye)
+
+    def test_arcade_mode_cutscenes_return_to_menu_goodbye_hangs_up(self):
+        bk = {e.key: e for e in w.WAKE_EXPERIENCES}
+        # games return to the menu (no hang-up)
+        self.assertFalse(bk["glados"].cutscene.end_call)
+        self.assertFalse(bk["tonyhawk"].cutscene.end_call)
+        # only the explicit goodbye hangs up
+        self.assertTrue(bk["goodbye"].cutscene.end_call)
+
+    def test_menu_return_phrases(self):
+        for t in ["take me to the main menu", "go back", "next game", "another game", "start over"]:
+            self.assertTrue(w.MENU_RETURN_RE.search(t), f"{t!r} should return to menu")
+        for t in ["global thermonuclear war", "joshua", "the cake is a lie"]:
+            self.assertIsNone(w.MENU_RETURN_RE.search(t), f"{t!r} must NOT be a menu-return")

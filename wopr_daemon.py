@@ -609,7 +609,8 @@ class Cutscene:
     message_mode: str = "none"              # none | fixed | generated
     message_text: str = ""                  # the fixed line, or the fallback for a generated one
     message_prompt: str = ""                # seed for a generated message (persona is system_prompt)
-    goodbye: bool = True                    # play the shared goodbye sign-off before ending
+    goodbye: bool = False                   # play the shared goodbye sign-off before finishing
+    end_call: bool = False                  # True => hang up after; False => return to the menu (arcade)
 
 
 # WOPR's quest expressed as data: the four WarGames beats, any order. reveal/flag stay empty so WOPR
@@ -663,7 +664,7 @@ ROBOCOP_EXPERIENCE = Experience(
 GLADOS_EXPERIENCE = Experience(
     "glados",
     wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
-    cutscene=Cutscene(clip="song", message_mode="none", goodbye=True))
+    cutscene=Cutscene(clip="song", message_mode="none"))   # song -> back to the menu (arcade)
 ET_EXPERIENCE = Experience(
     "et", ET_SYSTEM_PROMPT, ET_GREETING,
     wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|phone home)\b", re.I),
@@ -679,8 +680,7 @@ TONYHAWK_EXPERIENCE = Experience(
         message_prompt="Give the caller a short, hyped pep talk about landing their first kickflip, "
                        "and tell them they can shred like Patrick Garrity.",
         message_text="YOU CAN TOTALLY LAND THAT KICKFLIP. COMMIT, POP, FLICK, AND SEND IT. "
-                     "YOU COULD SHRED JUST LIKE PATRICK GARRITY.",   # fallback if generation fails
-        goodbye=True))
+                     "YOU COULD SHRED JUST LIKE PATRICK GARRITY."))   # -> back to the menu (arcade)
 # The greeter: default host. "operator" plays the hints clip, then returns to the menu.
 # NB: keep these wake words OUT of the menu greeting text — the menu bleeds into the mouthpiece as
 # sidetone, and any menu word here would self-trigger the operator. ("help" was removed for exactly
@@ -689,11 +689,11 @@ GREETER_EXPERIENCE = Experience(
     "greeter",
     wake=re.compile(r"\b(operator|the operator|main menu|list of options)\b", re.I),
     audio="operator")
-# Sign-off: saying bye/thanks plays the "thanks for playing" clip, then returns to the menu.
+# Sign-off (the explicit exit): saying bye/thanks plays the "thanks for playing" clip, then hangs up.
 GOODBYE_EXPERIENCE = Experience(
     "goodbye",
-    wake=re.compile(r"\b(good\s?bye|bye|thank you|thanks|hang up|i'?m done|see you|so long)\b", re.I),
-    audio="goodbye")
+    wake=re.compile(r"\b(good\s?bye|bye|hang up|see you|so long)\b", re.I),
+    cutscene=Cutscene(clip="goodbye", message_mode="none", end_call=True))
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
 WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_EXPERIENCE,
@@ -707,6 +707,18 @@ GAME_KEYS = {e.key for e in WAKE_EXPERIENCES if e.key not in ("greeter", "goodby
 def is_game(key: str) -> bool:
     """True if the experience key is a playable game (not a host/utility clip)."""
     return key in GAME_KEYS
+
+
+def flag_tally(sess) -> str:
+    """Arcade-mode progress line spoken after a quest win: how many flags collected this call."""
+    quests = [e for e in WAKE_EXPERIENCES if e.quest]
+    n = len(quests)
+    won = sum(1 for e in quests if sess.games.get(e.key, {}).get("won"))
+    if n <= 1:
+        return "FLAG CAPTURED. SAY ANOTHER NAME, SAY MAIN MENU, OR SAY GOODBYE."
+    if won >= n:
+        return f"THAT IS ALL {n} FLAGS. YOU HAVE BEATEN THEM ALL. SAY GOODBYE, OR PLAY AGAIN."
+    return f"THAT IS {won} OF {n} FLAGS. SAY ANOTHER NAME, SAY MAIN MENU, OR SAY GOODBYE."
 
 
 def validate_games(log) -> int:
@@ -725,6 +737,12 @@ def validate_games(log) -> int:
             if not cs.clip and cs.message_mode == "none" and not cs.goodbye:
                 log.error(kv(event="game_invalid", key=exp.key, why="cutscene produces nothing")); bad += 1
     return bad
+
+
+# Arcade mode: said inside any game, these drop the caller back to the menu to try another game.
+MENU_RETURN_RE = re.compile(
+    r"\b(main menu|back to (the )?menu|go back|next game|another game|other games?|"
+    r"start over|something else|play something else)\b", re.I)
 
 
 def match_experience(text: str) -> "Experience | None":
@@ -1647,7 +1665,9 @@ async def run_cutscene(sess: CallSession) -> None:
         if gframes:
             await sess.play(gframes, "goodbye")
     sess.note_game(sess.experience.key, completed=True)   # played through to the end
-    await end_call(sess)
+    if cs.end_call:
+        await end_call(sess)      # explicit exit (the goodbye sign-off)
+    # otherwise: return -> brain_task drops back to ARMED (the menu). Arcade mode.
 
 
 async def conversation(sess: CallSession) -> None:
@@ -1726,6 +1746,15 @@ async def conversation(sess: CallSession) -> None:
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
+            if MENU_RETURN_RE.search(text):
+                # Arcade mode: bail out of this game and drop back to the menu to try another.
+                sess.log.info(kv(event="menu_return", key=sess.experience.key, text=text))
+                try:
+                    await sess.play(await tts_frames("RETURNING TO THE MAIN MENU.", sess.log),
+                                    "menu_return")
+                except PipelineError:
+                    pass
+                return   # brain_task -> ARMED -> the menu; earned flags persist for the call
             if is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text):
                 sess.played_gtw = True
             # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
@@ -1783,6 +1812,7 @@ async def conversation(sess: CallSession) -> None:
                         if FLAG_INTRO_FRAMES:
                             await sess.play(FLAG_INTRO_FRAMES, "flag_intro")
                         await sess.play(frames, "flag")
+                        await sess.play(await tts_frames(flag_tally(sess), sess.log), "flag_tally")
                         if cfg.enable_chess:
                             # WOPR's post-mortem, straight from the film: offer a nice game of chess.
                             sess.chess_offered = True
