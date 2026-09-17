@@ -539,6 +539,12 @@ class WakeExperienceTests(unittest.TestCase):
             "dead or alive you are coming with me": "robocop",
             "the cake is a lie": "glados",
             "cake is a lie": "glados",
+            "elliott": "et",
+            "e t phone home": "et",
+            "i want to phone home": "et",
+            "let me do a kick flip": "tonyhawk",
+            "kickflip": "tonyhawk",
+            "tony hawk": "tonyhawk",
         }
         for text, key in cases.items():
             exp = w.match_experience(text)
@@ -551,10 +557,11 @@ class WakeExperienceTests(unittest.TestCase):
 
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
-        self.assertEqual(keys, ["wopr", "skynet", "robocop", "glados", "greeter", "goodbye"])
+        self.assertEqual(keys, ["wopr", "skynet", "robocop", "et", "tonyhawk",
+                                "glados", "greeter", "goodbye"])
         chat = [e for e in w.WAKE_EXPERIENCES if not e.audio]   # LLM chat characters
         prompts = {e.system_prompt for e in chat}
-        self.assertEqual(len(prompts), 3, "each chat character has its own system prompt")
+        self.assertEqual(len(prompts), 5, "each chat character has its own system prompt")
         self.assertTrue(all(e.greeting for e in chat))
 
     def test_glados_is_a_song_clip(self):

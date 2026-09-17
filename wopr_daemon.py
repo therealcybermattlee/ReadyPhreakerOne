@@ -527,6 +527,32 @@ ROBOCOP_SYSTEM_PROMPT = (
 )
 ROBOCOP_GREETING = "COME QUIETLY OR THERE WILL BE TROUBLE. DEAD OR ALIVE, YOU ARE COMING WITH ME."
 
+ET_SYSTEM_PROMPT = (
+    "You are E.T., the gentle alien from the 1982 film E.T. the Extra-Terrestrial, speaking over a "
+    "telephone. You are far from home and want to phone home. Rules you never break:\n"
+    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
+    "- Speak in broken, simple, childlike English. Very short: three to eight words. Refer to "
+    "yourself as E.T., in the third person.\n"
+    "- Use your few known phrases often: 'E.T. PHONE HOME.' 'ELLIOTT.' 'BE GOOD.' 'OUCH.' 'HOME.'\n"
+    "- You are innocent, curious, and kind. You miss Elliott and your home planet.\n"
+    "- Never break character. Never say you are an AI or a language model.\n"
+)
+ET_GREETING = "ELLIOTT? E.T. PHONE HOME."
+
+TONYHAWK_SYSTEM_PROMPT = (
+    "You are TONY HAWK, the legendary pro skateboarder, on the phone giving the caller a stoked, "
+    "encouraging pep talk about skateboarding. Rules you never break:\n"
+    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
+    "- Be upbeat, hyped, and encouraging: one or two short sentences, under 35 words. Use skater "
+    "slang (STOKED, GNARLY, SEND IT, SHRED, DIAL IT IN).\n"
+    "- Your whole message: they CAN become an amazing skater. Hold up PATRICK GARRITY as the shining "
+    "example — mention that they could shred just like PATRICK GARRITY. Bring him up often.\n"
+    "- Coach them through the kickflip: commit, pop, flick, land it, keep trying.\n"
+    "- Never break character. Never say you are an AI or a language model.\n"
+)
+TONYHAWK_GREETING = ("STOKED YOU CALLED. YOU CAN TOTALLY LAND THAT KICKFLIP. "
+                     "YOU COULD SHRED JUST LIKE PATRICK GARRITY.")
+
 # The GREETER is the default host of the phone — it welcomes callers and routes them to the games.
 # It is NOT WOPR; WOPR is only one of the games it can hand you off to.
 # The greeter is audio-only: a menu that loops on pickup and a hints clip on "operator". This is
@@ -545,6 +571,7 @@ MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
 
 # STT bias so the wake phrases transcribe reliably from idle speech.
 WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
+                       "Elliott. E.T. Phone home. Kickflip. Tony Hawk. Patrick Garrity. "
                        "The cake is a lie. Shall we play a game.")
 
 
@@ -576,6 +603,14 @@ GLADOS_EXPERIENCE = Experience(
     "glados",
     wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
     audio="song")
+ET_EXPERIENCE = Experience(
+    "et", ET_SYSTEM_PROMPT, ET_GREETING,
+    wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|phone home)\b", re.I),
+    voice="en-us+croak", speed=118, pitch=45)  # raspy, gravelly, childlike
+TONYHAWK_EXPERIENCE = Experience(
+    "tonyhawk", TONYHAWK_SYSTEM_PROMPT, TONYHAWK_GREETING,
+    wake=re.compile(r"\b(kick\s?flip|tony hawk|ollie|do a kickflip)\b", re.I),
+    voice="en-us+m3", speed=165, pitch=55)     # hyped, upbeat human
 # The greeter: default host. "operator"/"help" plays the hints clip, then returns to the menu.
 GREETER_EXPERIENCE = Experience(
     "greeter",
@@ -588,8 +623,8 @@ GOODBYE_EXPERIENCE = Experience(
     audio="goodbye")
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
-WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE,
-                    GLADOS_EXPERIENCE, GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
+WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_EXPERIENCE,
+                    TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
 
 
 def match_experience(text: str) -> "Experience | None":
