@@ -1716,12 +1716,9 @@ def update_stats_db(path: str, m: dict, log: "CallLogger") -> None:
         except (FileNotFoundError, ValueError):
             db = {}
         db.setdefault("total_calls", 0)
-        db.setdefault("callbacks", 0)
         db.setdefault("games", {})
         db["total_calls"] += 1
         db["updated"] = m["ts"]
-        if m.get("callback"):
-            db["callbacks"] += 1
         for key, g in m.get("games", {}).items():
             if key not in GAME_KEYS:
                 continue
