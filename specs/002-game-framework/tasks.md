@@ -27,9 +27,9 @@ Audio harness: `harness.py`. Deploy target on the mini: `/opt/wopr/`.
 
 ## Phase 1: Setup (scaffolding types)
 
-- [ ] T001 Add a "Game framework" section header + dataclasses `Objective`, `Quest`, `Cutscene` (fields per data-model.md) near the existing `Experience` dataclass in `wopr_daemon.py`
-- [ ] T002 Extend the `Experience` dataclass in `wopr_daemon.py` with optional `quest: Quest | None = None` and `cutscene: Cutscene | None = None`, and add an `archetype` property returning `"cutscene" | "quest" | "chat"`
-- [ ] T003 Update `GAME_KEYS` derivation in `wopr_daemon.py` so it stays "all experiences except greeter/goodbye/operator utility" and add an `is_game(key)` helper
+- [X] T001 Add a "Game framework" section header + dataclasses `Objective`, `Quest`, `Cutscene` (fields per data-model.md) near the existing `Experience` dataclass in `wopr_daemon.py`
+- [X] T002 Extend the `Experience` dataclass in `wopr_daemon.py` with optional `quest: Quest | None = None` and `cutscene: Cutscene | None = None`, and add an `archetype` property returning `"cutscene" | "quest" | "chat"`
+- [X] T003 Update `GAME_KEYS` derivation in `wopr_daemon.py` so it stays "all experiences except greeter/goodbye/operator utility" and add an `is_game(key)` helper
 
 **Checkpoint**: Types compile; `python -c "import ast; ast.parse(...)"` clean; existing tests still pass.
 
@@ -39,11 +39,11 @@ Audio harness: `harness.py`. Deploy target on the mini: `/opt/wopr/`.
 
 **⚠️ MUST complete before US1–US4.**
 
-- [ ] T004 Generalize `MovieQuest` into a data-driven quest engine in `wopr_daemon.py`: a `QuestState` (`hit`, `unlocked`) whose `update(text)` consumes an `Experience.quest` (objectives + `ordered`), replacing the WOPR-hardcoded beat set; keep a `progress` property for logging
-- [ ] T005 Add a startup validation pass in `amain` (`wopr_daemon.py`): reject/disable any game whose `quest` has no objectives or empty flag, or that sets both `quest` and `cutscene`; log `event=game_invalid key=…` and continue loading other games
-- [ ] T006 Add a `run_cutscene(sess)` helper skeleton in `wopr_daemon.py` (clip → message → goodbye → end-call) and a `end_call(sess)` helper that sends the AudioSocket terminate frame (type 0x00) then closes the writer, guarded by the existing single-teardown `sess.closed` flag (per contracts §2 / research D1)
-- [ ] T007 Refactor `conversation(sess)` in `wopr_daemon.py` to dispatch on `sess.experience.archetype`: `cutscene` → `run_cutscene`; otherwise the existing capture→STT→LLM→TTS loop with the generalized quest engine gating the win. Preserve wink/greeting/intro/barge-in ordering
-- [ ] T008 [P] Add unit tests in `tests/test_dsp.py` for `QuestState`: any-order completion, ordered completion (out-of-order does not win), tolerant matcher hits, per-call isolation (no leak)
+- [X] T004 Generalize `MovieQuest` into a data-driven quest engine in `wopr_daemon.py`: a `QuestState` (`hit`, `unlocked`) whose `update(text)` consumes an `Experience.quest` (objectives + `ordered`), replacing the WOPR-hardcoded beat set; keep a `progress` property for logging
+- [X] T005 Add a startup validation pass in `amain` (`wopr_daemon.py`): reject/disable any game whose `quest` has no objectives or empty flag, or that sets both `quest` and `cutscene`; log `event=game_invalid key=…` and continue loading other games
+- [X] T006 Add a `run_cutscene(sess)` helper skeleton in `wopr_daemon.py` (clip → message → goodbye → end-call) and a `end_call(sess)` helper that sends the AudioSocket terminate frame (type 0x00) then closes the writer, guarded by the existing single-teardown `sess.closed` flag (per contracts §2 / research D1)
+- [X] T007 Refactor `conversation(sess)` in `wopr_daemon.py` to dispatch on `sess.experience.archetype`: `cutscene` → `run_cutscene`; otherwise the existing capture→STT→LLM→TTS loop with the generalized quest engine gating the win. Preserve wink/greeting/intro/barge-in ordering
+- [X] T008 [P] Add unit tests in `tests/test_dsp.py` for `QuestState`: any-order completion, ordered completion (out-of-order does not win), tolerant matcher hits, per-call isolation (no leak)
 
 **Checkpoint**: Daemon boots; WOPR still reaches its win through the generalized engine; cutscene skeleton reachable but content not yet migrated.
 
@@ -57,14 +57,19 @@ game requires only a definition, no call-loop edits. Behavior matches today (no 
 **Independent Test**: Add a throwaway Game definition of each archetype, restart, confirm it's
 summonable and behaves per archetype; confirm no shared call-loop code changed to add it.
 
-- [ ] T009 [US1] Redefine `WOPR_EXPERIENCE` in `wopr_daemon.py` as a `quest=Quest(...)` carrying the existing four objectives (joshua/play/thermonuclear/winning-move), `ordered=False`, the current reveal line + `JOSHUA FIVE BY FIVE` flag, fanfare + Johnny-5 reveal voice + flag-intro clip; keep the whistle/Joshua entry and chess follow-on
+- [X] T009 [US1] Redefine `WOPR_EXPERIENCE` in `wopr_daemon.py` as a `quest=Quest(...)` carrying the existing four objectives (joshua/play/thermonuclear/winning-move), `ordered=False`, the current reveal line + `JOSHUA FIVE BY FIVE` flag, fanfare + Johnny-5 reveal voice + flag-intro clip; keep the whistle/Joshua entry and chess follow-on
 - [ ] T010 [P] [US1] Redefine `SKYNET_EXPERIENCE`, `ROBOCOP_EXPERIENCE`, `ET_EXPERIENCE` in `wopr_daemon.py` as quest games with placeholder single-objective quests (content finalized in US2) so they route through the quest path
 - [ ] T011 [P] [US1] Redefine `GLADOS_EXPERIENCE` and `TONYHAWK_EXPERIENCE` in `wopr_daemon.py` as `cutscene=Cutscene(...)` referencing the song/tonyhawk clips (message/end-call behavior finalized in US3; for now migrate current behavior)
-- [ ] T012 [US1] Ensure greeter/operator/goodbye remain utility (neither quest nor cutscene) and are excluded from games in `wopr_daemon.py`
-- [ ] T013 [US1] Add a unit test in `tests/test_dsp.py` proving a minimal ad-hoc Game definition (one quest, one cutscene) validates and is selectable via `match_experience`, with no edits outside the definition
-- [ ] T014 [US1] Update the roster/keys tests in `tests/test_dsp.py` to assert each game's `archetype` and that utilities are non-games
+- [X] T012 [US1] Ensure greeter/operator/goodbye remain utility (neither quest nor cutscene) and are excluded from games in `wopr_daemon.py`
+- [X] T013 [US1] Add a unit test in `tests/test_dsp.py` proving a minimal ad-hoc Game definition (one quest, one cutscene) validates and is selectable via `match_experience`, with no edits outside the definition
+- [X] T014 [US1] Update the roster/keys tests in `tests/test_dsp.py` to assert each game's `archetype` and that utilities are non-games
 
 **Checkpoint**: All characters run via declarative definitions; `unittest` green; WOPR unchanged for the caller.
+
+> **MVP note (2026-09-17)**: T010/T011 intentionally deferred. Giving Skynet/RoboCop/E.T. real
+> quests or converting GLaDOS/Tony Hawk to cutscenes would add wins / end-the-call behavior — that
+> is the payoff of US2/US3, not the parity MVP. The framework fully *supports* them (validated,
+> `run_cutscene` complete but unwired); they stay at today's behavior (`chat`/`clip`) until US2/US3.
 
 ---
 

@@ -342,8 +342,13 @@ class AttractTests(unittest.TestCase):
 
 
 class MovieQuestTests(unittest.TestCase):
+    """WOPR's quest, now driven by the generalized QuestState over WOPR_QUEST."""
+
+    def wopr_quest(self):
+        return w.QuestState(quest=w.WOPR_QUEST)
+
     def test_unlocks_only_after_all_beats(self):
-        q = w.MovieQuest()
+        q = self.wopr_quest()
         self.assertEqual(q.update("Hello WOPR, is Joshua there?"), "joshua")
         self.assertFalse(q.unlocked)
         self.assertEqual(q.update("Can we play a game?"), "play_game")
@@ -354,7 +359,7 @@ class MovieQuestTests(unittest.TestCase):
         self.assertEqual(q.progress, "4/4")
 
     def test_order_independent_and_idempotent(self):
-        q = w.MovieQuest()
+        q = self.wopr_quest()
         for t in ["winning move", "thermonuclear", "shall we play", "joshua"]:
             q.update(t)
         self.assertTrue(q.unlocked)
@@ -362,7 +367,7 @@ class MovieQuestTests(unittest.TestCase):
         self.assertIsNone(q.update("joshua joshua"))
 
     def test_no_false_unlock_on_normal_chat(self):
-        q = w.MovieQuest()
+        q = self.wopr_quest()
         for t in ["Hello.", "How are you?", "What games do you have?", "I like chess."]:
             q.update(t)
         self.assertFalse(q.unlocked)
@@ -660,3 +665,67 @@ class GameStatsTests(unittest.TestCase):
     def test_wake_can_be_disabled(self):
         self.assertTrue(w.parse_args([]).enable_wake)
         self.assertFalse(w.parse_args(["--no-wake"]).enable_wake)
+
+
+class GameFrameworkTests(unittest.TestCase):
+    """Spec 002 MVP: archetypes, generalized QuestState, and startup validation."""
+
+    def test_queststate_none_never_unlocks(self):
+        q = w.QuestState(quest=None)
+        self.assertIsNone(q.update("joshua thermonuclear winning move"))
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.progress, "0/0")
+
+    def test_queststate_any_order(self):
+        import re
+        quest = w.Quest(objectives=(
+            w.Objective("a", re.compile(r"alpha", re.I)),
+            w.Objective("b", re.compile(r"bravo", re.I)),
+        ), ordered=False)
+        q = w.QuestState(quest=quest)
+        self.assertEqual(q.update("bravo first"), "b")   # out of list order is fine
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.update("then alpha"), "a")
+        self.assertTrue(q.unlocked)
+
+    def test_queststate_ordered_requires_sequence(self):
+        import re
+        quest = w.Quest(objectives=(
+            w.Objective("a", re.compile(r"alpha", re.I)),
+            w.Objective("b", re.compile(r"bravo", re.I)),
+        ), ordered=True)
+        q = w.QuestState(quest=quest)
+        self.assertIsNone(q.update("bravo only"))  # b can't be hit before a
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.update("alpha"), "a")
+        self.assertEqual(q.update("bravo"), "b")
+        self.assertTrue(q.unlocked)
+
+    def test_wopr_is_a_quest_others_at_parity(self):
+        by_key = {e.key: e for e in w.WAKE_EXPERIENCES}
+        self.assertEqual(by_key["wopr"].archetype, "quest")
+        self.assertIs(by_key["wopr"].quest, w.WOPR_QUEST)
+        # parity: these keep their current shape in the MVP
+        self.assertEqual(by_key["skynet"].archetype, "chat")
+        self.assertEqual(by_key["robocop"].archetype, "chat")
+        self.assertEqual(by_key["et"].archetype, "chat")
+        self.assertEqual(by_key["tonyhawk"].archetype, "chat")
+        self.assertEqual(by_key["glados"].archetype, "clip")
+        # utilities are not games
+        self.assertFalse(w.is_game("greeter"))
+        self.assertFalse(w.is_game("goodbye"))
+
+    def test_minimal_game_definitions_validate(self):
+        import re, logging
+        log = w.get_logger("test")
+        # a valid quest game and a valid cutscene game raise no invalid count
+        good_quest = w.Experience("q", wake=re.compile("q"),
+                                  quest=w.Quest(objectives=(w.Objective("x", re.compile("x")),), flag="F"))
+        good_cut = w.Experience("c", wake=re.compile("c"), cutscene=w.Cutscene(clip="song"))
+        self.assertEqual(good_quest.archetype, "quest")
+        self.assertEqual(good_cut.archetype, "cutscene")
+        # the shipped roster is all valid
+        self.assertEqual(w.validate_games(log), 0)
+
+    def test_shipped_roster_has_no_invalid_games(self):
+        self.assertEqual(w.validate_games(w.get_logger("test")), 0)

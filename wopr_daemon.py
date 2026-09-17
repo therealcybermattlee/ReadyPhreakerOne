@@ -576,6 +576,51 @@ WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead
                        "The cake is a lie. Shall we play a game.")
 
 
+# --- Game framework (spec 002) -------------------------------------------------------------------
+# A game is declared as data on its Experience: a Quest (interactive objectives -> win -> flag) or a
+# Cutscene (play a clip -> optional message -> goodbye -> end the call). WOPR is a Quest; the other
+# characters keep their current shape until US2/US3 give them real quests/cutscenes.
+@dataclasses.dataclass(frozen=True)
+class Objective:
+    """One goal inside a Quest, matched from a caller utterance with a tolerant regex."""
+    name: str
+    matcher: "re.Pattern"
+    label: str = ""
+    response: str = ""      # optional line spoken when this objective is newly hit (reserved)
+
+
+@dataclasses.dataclass(frozen=True)
+class Quest:
+    objectives: tuple                       # tuple[Objective, ...]; must be non-empty
+    ordered: bool = False                   # True => objectives must be satisfied in list order
+    reveal: str = ""                        # spoken on win; {flag} substituted. Empty => use cfg (WOPR)
+    flag: str = ""                          # reward token. Empty => use cfg (WOPR)
+    fanfare: bool = True                    # play the wink fanfare before the reveal
+    reveal_voice: "str | None" = None
+    reveal_speed: "int | None" = None
+    reveal_pitch: "int | None" = None
+    reveal_intro: str = ""                  # intro-clip key played before the reveal
+
+
+@dataclasses.dataclass(frozen=True)
+class Cutscene:
+    clip: str = ""                          # clip key to play (e.g. "song")
+    message_mode: str = "none"              # none | fixed | generated
+    message_text: str = ""                  # the fixed line, or the fallback for a generated one
+    goodbye: bool = True                    # play the shared goodbye sign-off before ending
+
+
+# WOPR's quest expressed as data: the four WarGames beats, any order. reveal/flag stay empty so WOPR
+# keeps using the env-overridable cfg.flag_text / cfg.flag (behavior parity).
+_WOPR_BEAT_LABELS = {"joshua": "Said Joshua", "play_game": "Asked to play a game",
+                     "global_thermonuclear_war": "Chose thermonuclear war",
+                     "winning_move": "The only winning move"}
+WOPR_QUEST = Quest(
+    objectives=tuple(Objective(name, rx, _WOPR_BEAT_LABELS.get(name, name))
+                     for name, rx in MOVIE_BEATS.items()),
+    ordered=False, fanfare=True)
+
+
 @dataclasses.dataclass(frozen=True)
 class Experience:
     key: str
@@ -586,11 +631,24 @@ class Experience:
     speed: int = ESPEAK_SPEED
     pitch: int = ESPEAK_PITCH
     audio: str = ""                          # ""=LLM chat; "song"/"operator"=play a clip, then return
+    quest: "Quest | None" = None             # Quest archetype (interactive; win -> flag)
+    cutscene: "Cutscene | None" = None       # Cutscene archetype (play-and-close)
+
+    @property
+    def archetype(self) -> str:
+        if self.cutscene:
+            return "cutscene"
+        if self.quest:
+            return "quest"
+        if self.audio:
+            return "clip"
+        return "chat"
 
 
 WOPR_EXPERIENCE = Experience(
     "wopr", WOPR_SYSTEM_PROMPT, GREETING_DEFAULT,
-    wake=re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I))
+    wake=re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I),
+    quest=WOPR_QUEST)
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
     wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b", re.I),
@@ -632,6 +690,25 @@ WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_E
 GAME_KEYS = {e.key for e in WAKE_EXPERIENCES if e.key not in ("greeter", "goodbye")}
 
 
+def is_game(key: str) -> bool:
+    """True if the experience key is a playable game (not a host/utility clip)."""
+    return key in GAME_KEYS
+
+
+def validate_games(log) -> int:
+    """Check every game definition at startup; log each invalid one and return the count.
+    A bad definition is reported but does not stop the daemon or the other games."""
+    bad = 0
+    for exp in WAKE_EXPERIENCES:
+        if exp.quest is not None and exp.cutscene is not None:
+            log.error(kv(event="game_invalid", key=exp.key, why="both quest and cutscene")); bad += 1
+        if exp.quest is not None and not exp.quest.objectives:
+            log.error(kv(event="game_invalid", key=exp.key, why="quest has no objectives")); bad += 1
+        if exp.cutscene is not None and not exp.cutscene.clip:
+            log.error(kv(event="game_invalid", key=exp.key, why="cutscene has no clip")); bad += 1
+    return bad
+
+
 def match_experience(text: str) -> "Experience | None":
     """Return the experience whose wake phrase appears in the caller's idle utterance, or None."""
     for exp in WAKE_EXPERIENCES:
@@ -641,24 +718,44 @@ def match_experience(text: str) -> "Experience | None":
 
 
 @dataclasses.dataclass
-class MovieQuest:
+class QuestState:
+    """Per-call progress through a game's Quest. Generalizes the old WOPR-specific MovieQuest:
+    driven by the active Experience's Quest.objectives (any-order or ordered)."""
+    quest: "Quest | None" = None
     hit: set = dataclasses.field(default_factory=set)
     unlocked: bool = False
 
     def update(self, text: str) -> str | None:
-        """Feed one caller utterance. Returns the name of a newly-hit beat, or None."""
+        """Feed one caller utterance. Returns the name of a newly-hit objective, or None."""
+        if self.quest is None:
+            return None
+        objs = self.quest.objectives
         newly = None
-        for name, rx in MOVIE_BEATS.items():
-            if name not in self.hit and rx.search(text or ""):
-                self.hit.add(name)
-                newly = name
-        if len(self.hit) == len(MOVIE_BEATS):
-            self.unlocked = True
+        if self.quest.ordered:
+            # only the next unmet objective may be satisfied by this utterance
+            for o in objs:
+                if o.name in self.hit:
+                    continue
+                if o.matcher.search(text or ""):
+                    self.hit.add(o.name)
+                    newly = o.name
+                break
+        else:
+            for o in objs:
+                if o.name not in self.hit and o.matcher.search(text or ""):
+                    self.hit.add(o.name)
+                    newly = o.name
+        self._recompute()
         return newly
+
+    def _recompute(self) -> None:
+        if self.quest is not None and self.hit >= {o.name for o in self.quest.objectives}:
+            self.unlocked = True
 
     @property
     def progress(self) -> str:
-        return f"{len(self.hit)}/{len(MOVIE_BEATS)}"
+        n = len(self.quest.objectives) if self.quest is not None else 0
+        return f"{len(self.hit)}/{n}"
 
 
 # --- "How about a nice game of chess?" — move-by-move playthrough --------------------------------
@@ -1219,17 +1316,18 @@ class CallSession:
         self.recent_windows: collections.deque = collections.deque(maxlen=HOLD_WINDOWS + 5)
         self.whistle_hz: float | None = None          # measured pitch of the first whistle
         self.whistle_hzs: list[float] = []            # every detected whistle's pitch
-        self.quest = MovieQuest()
         self.callback_kind = ("win" if call_id == CALLBACK_WIN_UUID
                                else "sim" if call_id == CALLBACK_UUID else None)
         self.is_callback = self.callback_kind is not None
         if self.is_callback:
             self.experience = WOPR_EXPERIENCE   # callbacks are a WOPR feature (Professor Falken)
+        self.quest = QuestState(quest=self.experience.quest)
         # A callback resumes the quest progress the caller had when they hung up, so someone who
         # was one line short of the flag can finish it when WOPR rings back.
         global _pending_quest
         if self.is_callback and _pending_quest:
             self.quest.hit = set(_pending_quest)
+            self.quest._recompute()
             self.log.info(kv(event="quest_resumed", beats=len(self.quest.hit),
                              have=",".join(sorted(self.quest.hit))))
             _pending_quest = set()
@@ -1462,10 +1560,70 @@ class BargeIn(Exception):
     pass
 
 
+async def end_call(sess: CallSession) -> None:
+    """Terminate the AudioSocket so Asterisk hangs up the payphone. Teardown, recording finalization,
+    and stats run exactly once via handle_call's finally block (guarded by sess.closed)."""
+    try:
+        sess.writer.write(encode_frame(FrameType.TERMINATE))
+        await sess.writer.drain()
+    except (ConnectionError, OSError):
+        pass
+
+
+async def run_cutscene(sess: CallSession) -> None:
+    """Cutscene archetype: intro → clip → optional message → goodbye → end the call. This runner is
+    complete; US3 wires the cutscene content onto GLaDOS and Tony Hawk. No game triggers it yet."""
+    cfg = sess.cfg
+    cs = sess.experience.cutscene
+    sess.note_game(sess.experience.key, reached=True, clip=True)
+    sess.log.info(kv(event="experience", key=sess.experience.key, archetype="cutscene"))
+    intro = INTRO_FRAMES.get(sess.experience.key)
+    if intro:
+        await sess.play(intro, f"intro:{sess.experience.key}")
+    clips = {"song": SONG_FRAMES, "operator": OPERATOR_FRAMES, "goodbye": GOODBYE_FRAMES}
+    clip_frames = clips.get(cs.clip) if cs.clip else None
+    if clip_frames:
+        await sess.play(clip_frames, f"cutscene:{cs.clip}")
+    elif cs.clip:
+        sess.log.warning(kv(event="clip_missing", audio=cs.clip))
+    if cs.message_mode != "none":
+        msg = None
+        if cs.message_mode == "generated":
+            try:
+                msg, _ = await llm_reply([], cs.message_text or "Say your line.", url=cfg.ollama_url,
+                                         model=cfg.model, log=sess.log,
+                                         system_prompt=sess.experience.system_prompt)
+            except PipelineError:
+                msg = None
+        if not msg:
+            msg = cs.message_text
+        if msg:
+            try:
+                await sess.play(await tts_frames(msg, sess.log, voice=sess.experience.voice,
+                                                 speed=sess.experience.speed,
+                                                 pitch=sess.experience.pitch), "cutscene_msg")
+            except PipelineError as e:
+                sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:120]))
+    if cs.goodbye:
+        gframes = GOODBYE_FRAMES
+        if gframes is None:
+            try:
+                gframes = await tts_frames(cfg.goodbye_text, sess.log)
+            except PipelineError:
+                gframes = None
+        if gframes:
+            await sess.play(gframes, "goodbye")
+    await end_call(sess)
+
+
 async def conversation(sess: CallSession) -> None:
     """One session: wink, greeting, then capture → STT → LLM → TTS → play, until cancelled."""
     cfg = sess.cfg
     sess.set_state(CallState.SPEAKING)
+    if sess.experience.cutscene is not None:
+        # Cutscene archetype: play-and-close (clip -> optional message -> goodbye -> end call).
+        await run_cutscene(sess)
+        return
     if sess.experience.audio:
         # A clip-experience (GLaDOS song, greeter hints, goodbye) plays audio, then returns to idle.
         kind = sess.experience.audio
@@ -1513,6 +1671,10 @@ async def conversation(sess: CallSession) -> None:
                                              pitch=sess.experience.pitch), "greeting")
     except PipelineError as e:
         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+    # Ensure the quest engine matches the active game (a fresh call arrives as the greeter, then this
+    # conversation runs as the summoned game). Preserve any carried callback progress.
+    if sess.quest.quest is not sess.experience.quest:
+        sess.quest = QuestState(quest=sess.experience.quest)
     while True:
         sess.set_state(CallState.CAPTURING)
         sess.vad.reset()
@@ -1677,7 +1839,7 @@ async def brain_task(sess: CallSession) -> None:
         dropped = sess.drain()
         if sess.state is not CallState.ARMED:
             sess.history.clear()
-            sess.quest = MovieQuest()
+            sess.quest = QuestState(quest=sess.experience.quest)
             sess.in_chess = False
             sess.chess_idx = 0
             sess.chess_offered = False
@@ -1958,6 +2120,10 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
+    games = [e.key for e in WAKE_EXPERIENCES if is_game(e.key)]
+    log.info(kv(event="games", n=len(games), roster=",".join(f"{e.key}:{e.archetype}"
+                                                             for e in WAKE_EXPERIENCES if is_game(e.key))))
+    validate_games(log)
     global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES, INTRO_FRAMES
     menu_pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
     if cfg.menu_audio:
