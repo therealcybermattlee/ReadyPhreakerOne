@@ -563,7 +563,7 @@ class WakeExperienceTests(unittest.TestCase):
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
         self.assertEqual(keys, ["wopr", "skynet", "robocop", "et", "tonyhawk",
-                                "glados", "greeter", "goodbye"])
+                                "glados", "peewee", "greeter", "goodbye"])
         convo = [e for e in w.WAKE_EXPERIENCES if e.archetype in ("chat", "quest")]  # WOPR + chats
         prompts = {e.system_prompt for e in convo}
         self.assertEqual(len(prompts), 4, "wopr/skynet/robocop/et each have their own system prompt")
@@ -986,3 +986,86 @@ class QuestWinTests(unittest.TestCase):
             self.assertIn("1 OF 4 FLAGS", w.flag_tally(s))
 
         asyncio.run(scenario())
+
+
+class PeeweeCutsceneTests(unittest.TestCase):
+    """'Secret word' -> the Pee-wee scream clip -> Tequila -> back to the menu (a two-clip cutscene)."""
+
+    def test_secret_word_summons_peewee(self):
+        for t in ["what's the secret word", "pee-wee", "peewee herman", "mecca lecca hi"]:
+            exp = w.match_experience(t)
+            self.assertIsNotNone(exp, t)
+            self.assertEqual(exp.key, "peewee", t)
+
+    def test_peewee_is_a_two_clip_cutscene_that_returns_to_the_menu(self):
+        exp = {e.key: e for e in w.WAKE_EXPERIENCES}["peewee"]
+        self.assertEqual(exp.archetype, "cutscene")
+        self.assertEqual(exp.cutscene.clips, ("peewee-secret-word", "tequila"))
+        self.assertEqual(exp.cutscene.message_mode, "none")
+        self.assertFalse(exp.cutscene.end_call)
+        self.assertTrue(w.is_game("peewee"))
+        self.assertEqual(w.validate_games(w.get_logger("test")), 0)
+
+    def test_run_cutscene_plays_clips_in_order_and_skips_missing(self):
+        import asyncio
+
+        async def scenario():
+            class _W:
+                def get_extra_info(self, k): return None
+                def write(self, b): pass
+                async def drain(self): pass
+                def close(self): pass
+            sess = w.CallSession(b"\x99" * 16, None, _W(), w.Config())
+            sess.experience = {e.key: e for e in w.WAKE_EXPERIENCES}["peewee"]
+            played = []
+
+            async def fake_play(frames, kind):
+                played.append(kind)
+            sess.play = fake_play
+            saved = dict(w.CLIP_FRAMES)
+            try:
+                w.CLIP_FRAMES.clear()
+                w.CLIP_FRAMES["tequila"] = [b"\x00" * w.FRAME_BYTES]   # only the second clip is on disk
+                await w.run_cutscene(sess)
+            finally:
+                w.CLIP_FRAMES.clear()
+                w.CLIP_FRAMES.update(saved)
+            self.assertEqual(played, ["cutscene:tequila"])                # missing scream skipped, not fatal
+            self.assertTrue(sess.games["peewee"]["completed"])
+
+        asyncio.run(scenario())
+
+
+class AnalyzeReportTests(unittest.TestCase):
+    """Spec 002 US4: analyze.py separates quest wins from cutscene completions, legacy-safe."""
+
+    def test_per_game_table_has_wins_and_completions_and_tolerates_legacy(self):
+        import analyze
+        legacy = {"call": "a", "callback": None, "whistled": True, "won": True, "points": 4,
+                  "beats": ["joshua", "play_game", "global_thermonuclear_war", "winning_move"],
+                  "duration_ms": 1000, "turns": 3}                                   # pre-framework record
+        quest = {"call": "b", "callback": None, "whistled": False, "won": True, "points": 4,
+                 "beats": [], "duration_ms": 1000, "turns": 4,
+                 "games": {"wopr": {"reached": True, "turns": 4, "won": True, "clip": False}}}   # no 'completed' key
+        cut = {"call": "c", "callback": None, "whistled": False, "won": False, "points": 0,
+               "beats": [], "duration_ms": 500, "turns": 0,
+               "games": {"glados": {"reached": True, "turns": 0, "won": False, "clip": True,
+                                    "completed": True}}}
+        text, summary = analyze.build_report([legacy, quest, cut], [])
+        self.assertIn("compl", text)
+        lines = text.splitlines()
+        hdr = next(i for i, ln in enumerate(lines)
+                   if ln.strip().startswith("game") and "compl" in ln and "players" in ln)
+        table = []
+        for ln in lines[hdr + 1:]:            # the table rows end at the first blank line
+            if not ln.strip():
+                break
+            table.append(ln)
+        rows = {ln.split()[0]: ln for ln in table}
+        self.assertIn("WOPR", rows)
+        self.assertIn("GLaDOS", rows)
+        wopr_cols = rows["WOPR"].split()
+        glados_cols = rows["GLaDOS"].split()
+        # columns: ... wins compl clips  (last three numbers)
+        self.assertEqual(wopr_cols[-3:], ["1", "0", "0"])
+        self.assertEqual(glados_cols[-3:], ["0", "1", "1"])

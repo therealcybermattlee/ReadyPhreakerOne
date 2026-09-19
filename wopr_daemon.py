@@ -279,6 +279,7 @@ SONG_FRAMES: list[bytes] | None = None         # song played by a song-experienc
 OPERATOR_FRAMES: list[bytes] | None = None     # the greeter's "operator" hints clip (recorded); TTS if None
 GOODBYE_FRAMES: list[bytes] | None = None       # the "thanks for playing" sign-off clip (recorded); TTS if None
 INTRO_FRAMES: dict[str, list[bytes]] = {}       # per-character intro clip, keyed by experience key
+CLIP_FRAMES: dict[str, list[bytes]] = {}        # every <intro_dir>/<name>.wav, keyed by <name> (cutscene clips)
 
 
 def load_wav_file(path: str) -> tuple[int, np.ndarray]:
@@ -616,6 +617,7 @@ class Quest:
 @dataclasses.dataclass(frozen=True)
 class Cutscene:
     clip: str = ""                          # clip key to play (e.g. "song"); empty => intro clip only
+    clips: tuple = ()                       # more clip keys played in order after `clip` (a sequence)
     message_mode: str = "none"              # none | fixed | generated
     message_text: str = ""                  # the fixed line, or the fallback for a generated one
     message_prompt: str = ""                # seed for a generated message (persona is system_prompt)
@@ -746,6 +748,12 @@ TONYHAWK_EXPERIENCE = Experience(
                        "and tell them they can shred like Patrick Garrity.",
         message_text="YOU CAN TOTALLY LAND THAT KICKFLIP. COMMIT, POP, FLICK, AND SEND IT. "
                      "YOU COULD SHRED JUST LIKE PATRICK GARRITY."))   # -> back to the menu (arcade)
+# Pee-wee (cutscene): say the secret word -> everybody screams -> then "Tequila" -> back to the menu.
+# Clips are plain WAVs in the intro dir: peewee-secret-word.wav and tequila.wav (see CLIP_FRAMES).
+PEEWEE_EXPERIENCE = Experience(
+    "peewee",
+    wake=re.compile(r"\bsecret\s+word\b|\bpee\s?-?wee\b|\bmecca\s+lecca\b", re.I),
+    cutscene=Cutscene(clips=("peewee-secret-word", "tequila"), message_mode="none"))
 # The greeter: default host. "operator" plays the hints clip, then returns to the menu.
 # NB: keep these wake words OUT of the menu greeting text — the menu bleeds into the mouthpiece as
 # sidetone, and any menu word here would self-trigger the operator. ("help" was removed for exactly
@@ -762,7 +770,8 @@ GOODBYE_EXPERIENCE = Experience(
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
 WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_EXPERIENCE,
-                    TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
+                    TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, PEEWEE_EXPERIENCE,
+                    GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
 
 
 # The playable games (for stats/categorization); the greeter and goodbye are host/utility, not games.
@@ -799,7 +808,7 @@ def validate_games(log) -> int:
             cs = exp.cutscene
             # a cutscene must produce something: a clip, a message, an intro (checked at play time),
             # or at least the goodbye. Only a fully-empty cutscene is invalid.
-            if not cs.clip and cs.message_mode == "none" and not cs.goodbye:
+            if not cs.clip and not cs.clips and cs.message_mode == "none" and not cs.goodbye:
                 log.error(kv(event="game_invalid", key=exp.key, why="cutscene produces nothing")); bad += 1
     return bad
 
@@ -1713,12 +1722,13 @@ async def run_cutscene(sess: CallSession) -> None:
     intro = INTRO_FRAMES.get(sess.experience.key)
     if intro:
         await sess.play(intro, f"intro:{sess.experience.key}")
-    clips = {"song": SONG_FRAMES, "operator": OPERATOR_FRAMES, "goodbye": GOODBYE_FRAMES}
-    clip_frames = clips.get(cs.clip) if cs.clip else None
-    if clip_frames:
-        await sess.play(clip_frames, f"cutscene:{cs.clip}")
-    elif cs.clip:
-        sess.log.warning(kv(event="clip_missing", audio=cs.clip))
+    builtin = {"song": SONG_FRAMES, "operator": OPERATOR_FRAMES, "goodbye": GOODBYE_FRAMES}
+    for key in ((cs.clip,) if cs.clip else ()) + tuple(cs.clips):
+        clip_frames = builtin.get(key) or CLIP_FRAMES.get(key)
+        if clip_frames:
+            await sess.play(clip_frames, f"cutscene:{key}")
+        else:
+            sess.log.warning(kv(event="clip_missing", audio=key))   # skipped, never fatal
     if cs.message_mode != "none":
         msg = None
         if cs.message_mode == "generated" and not cfg.stub_llm:
@@ -2236,7 +2246,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--operator-hints", default=env.get("WOPR_OPERATOR_HINTS", OPERATOR_HINTS_DEFAULT), help="TTS hints spoken on 'operator' when no --operator-audio clip is set")
     p.add_argument("--goodbye-audio", default=env.get("WOPR_GOODBYE_AUDIO", ""), help="recorded 'thanks for playing' WAV, played on bye/thanks; falls back to synthesized --goodbye-text")
     p.add_argument("--goodbye-text", default=env.get("WOPR_GOODBYE_TEXT", GOODBYE_TEXT_DEFAULT), help="TTS sign-off spoken on bye/thanks when no --goodbye-audio clip is set")
-    p.add_argument("--intro-dir", default=env.get("WOPR_INTRO_DIR", ""), help="directory of per-character intro clips named <key>-intro.wav (e.g. et-intro.wav), played before that character speaks")
+    p.add_argument("--intro-dir", default=env.get("WOPR_INTRO_DIR", ""), help="directory of WAV clips: <key>-intro.wav plays before that character speaks; any other <name>.wav is a cutscene clip key <name> (e.g. tequila.wav)")
     p.add_argument("--song", default=env.get("WOPR_SONG", ""), help="WAV played by a song-experience, e.g. GLaDOS 'Still Alive' on 'the cake is a lie'")
     p.add_argument("--flag-intro", default=env.get("WOPR_FLAG_INTRO", ""), help="WAV played before the flag reveal (e.g. a sampled Johnny 5 line you supply)")
     p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
@@ -2343,17 +2353,28 @@ async def amain(cfg: Config) -> int:
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="goodbye_audio_failed", path=cfg.goodbye_audio, err=f"{type(e).__name__}: {e}"[:150]))
     if cfg.intro_dir:
-        # Per-character intro clip: <intro_dir>/<key>-intro.wav, played before that character speaks.
-        for exp in WAKE_EXPERIENCES:
-            path = os.path.join(cfg.intro_dir, f"{exp.key}-intro.wav")
-            if not os.path.isfile(path):
-                continue
+        # Every <intro_dir>/<name>.wav is loaded as clip <name> (usable by any cutscene via its clip
+        # keys). <key>-intro.wav is additionally the intro clip played before that character speaks.
+        keys = {exp.key for exp in WAKE_EXPERIENCES}
+        try:
+            names = sorted(f[:-4] for f in os.listdir(cfg.intro_dir) if f.lower().endswith(".wav"))
+        except OSError as e:
+            names = []
+            log.error(kv(event="clips_dir_failed", path=cfg.intro_dir, err=f"{type(e).__name__}: {e}"[:150]))
+        for name in names:
+            path = os.path.join(cfg.intro_dir, f"{name}.wav")
             try:
-                INTRO_FRAMES[exp.key] = load_attract(path, gain=1.0)
-                log.info(kv(event="intro", key=exp.key, path=path, frames=len(INTRO_FRAMES[exp.key]),
-                            sec=round(len(INTRO_FRAMES[exp.key]) * FRAME_PERIOD_S, 1)))
+                CLIP_FRAMES[name] = load_attract(path, gain=1.0)
             except (OSError, ValueError, wave.Error) as e:
-                log.error(kv(event="intro_failed", key=exp.key, path=path, err=f"{type(e).__name__}: {e}"[:150]))
+                log.error(kv(event="clip_failed", clip=name, path=path, err=f"{type(e).__name__}: {e}"[:150]))
+                continue
+            if name.endswith("-intro") and name[:-6] in keys:
+                INTRO_FRAMES[name[:-6]] = CLIP_FRAMES[name]
+                log.info(kv(event="intro", key=name[:-6], path=path, frames=len(CLIP_FRAMES[name]),
+                            sec=round(len(CLIP_FRAMES[name]) * FRAME_PERIOD_S, 1)))
+            else:
+                log.info(kv(event="clip", clip=name, path=path, frames=len(CLIP_FRAMES[name]),
+                            sec=round(len(CLIP_FRAMES[name]) * FRAME_PERIOD_S, 1)))
     if cfg.song:
         try:
             SONG_FRAMES = load_attract(cfg.song, gain=1.0)   # full-volume song for song-experiences

@@ -135,7 +135,7 @@ menu; "goodbye" = sign-off clip → hang up; one teardown, recording + stats wri
 
 ---
 
-## Phase 6: US4 — Analytics: wins vs completions (Priority: P2) ⬅️ NEXT
+## Phase 6: US4 — Analytics: wins vs completions (Priority: P2)
 
 **Goal**: Per-archetype completion signal recorded and reported; backward compatible.
 
@@ -144,14 +144,17 @@ menu; "goodbye" = sign-off clip → hang up; one teardown, recording + stats wri
 
 - [X] T026 [US4] `note_game()` in `wopr_daemon.py` accepts `completed=True` and the per-call `games[key]` record carries `completed` (`test_completed_recorded_in_metrics`)
 - [X] T027 [US4] `update_stats_db()` in `wopr_daemon.py` increments `completions` beside `wins` per game, `setdefault`-ing it on legacy aggregates (`test_aggregate_counts_completions`)
-- [ ] T028 [P] [US4] Extend `build_report()` in `analyze.py`: add `"completions": 0` to the per-game counters, increment it with `1 if g.get("completed") else 0`, and add a `completions` column after `wins` in the PER-GAME BREAKDOWN header and row format strings; also relabel the summary line "Won the WOPR flag" so it is clearly the WOPR funnel, not all games
-- [ ] T029 [P] [US4] Add `AnalyzeReportTests` in `tests/test_dsp.py` that imports `analyze.build_report` and feeds a mixed session list: one legacy record (no `games`, no `completed`), one quest win (`games.wopr.won=True`), one cutscene completion (`games.glados.completed=True`); assert the report renders without error, the `completions` column shows 1 for glados and 0 for wopr, and `wins` shows the inverse
+- [X] T028 [P] [US4] Extend `build_report()` in `analyze.py`: add `"completions": 0` to the per-game counters, increment it with `1 if g.get("completed") else 0`, and add a `completions` column after `wins` in the PER-GAME BREAKDOWN header and row format strings; also relabel the summary line "Won the WOPR flag" so it is clearly the WOPR funnel, not all games
+- [X] T029 [P] [US4] Add `AnalyzeReportTests` in `tests/test_dsp.py` that imports `analyze.build_report` and feeds a mixed session list: one legacy record (no `games`, no `completed`), one quest win (`games.wopr.won=True`), one cutscene completion (`games.glados.completed=True`); assert the report renders without error, the `completions` column shows 1 for glados and 0 for wopr, and `wins` shows the inverse
 
-**Checkpoint**: Stats distinguish wins from completions end to end.
+**Checkpoint**: Stats distinguish wins from completions end to end. ✅ Done 2026-09-18.
 
 ---
 
-## Phase 7: Polish & Cross-Cutting
+## Phase 7: Polish & Cross-Cutting ⬅️ NEXT
+
+- [X] T041 Add the Pee-wee cutscene game (`PEEWEE_EXPERIENCE` in `wopr_daemon.py`): wake "secret word" / "Pee-wee" / "mecca lecca"; `Cutscene(clips=("peewee-secret-word", "tequila"))` → back to the menu. Cutscene gained a `clips` sequence and the intro dir now loads every `<name>.wav` into `CLIP_FRAMES` as a cutscene clip key
+- [ ] T042 Supply the two WAVs on the mini: `<intro_dir>/peewee-secret-word.wav` (the Playhouse scream) and `<intro_dir>/tequila.wav`, 8 kHz-compatible 16-bit PCM like the other clips; confirm `event=clip clip=tequila` at boot and re-record the operator hints clip if it should mention the secret word
 
 - [ ] T030 Run the full `unittest` suite (`./venv/bin/python -m unittest tests.test_dsp`) after US2 and US4 land and fix any regressions
 - [ ] T031 Deploy to the mini (scp `wopr_daemon.py` + `analyze.py` to `/opt/wopr`, restart the LaunchDaemon) and confirm a clean boot: `event=games n=6 roster=wopr:quest,skynet:quest,robocop:quest,et:quest,tonyhawk:cutscene,glados:cutscene` and no `game_invalid`

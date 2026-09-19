@@ -32,7 +32,8 @@ BEAT_LABEL = {"joshua": "Said “Joshua”", "play_game": "Asked to play a game"
 
 # The playable games (matches the daemon's roster) and their display names.
 GAME_LABEL = {"wopr": "WOPR (WarGames)", "skynet": "Skynet / T-800", "robocop": "RoboCop",
-              "et": "E.T.", "tonyhawk": "Tony Hawk", "glados": "GLaDOS (song)"}
+              "et": "E.T.", "tonyhawk": "Tony Hawk", "glados": "GLaDOS (song)",
+              "peewee": "Pee-wee (Tequila)"}
 
 STOPWORDS = set(("a an and the to of is it i you we they he she that this these those for on in at "
                  "with as be are was were do does did have has had will would can could should i'm "
@@ -88,7 +89,8 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
         L.append(f"  Whistled to WOPR:           {len(whistled)}/{len(inbound)} "
                  f"({100*len(whistled)/len(inbound):.0f}%)")
     L.append(f"  Won the WOPR flag:          {len(won)}/{len(inbound)}  "
-             f"({100*len(won)/max(len(inbound),1):.0f}% of players)")
+             f"({100*len(won)/max(len(inbound),1):.0f}% of players)   "
+             f"(WOPR only; every game's wins/completions are in the per-game table)")
     L.append("")
 
     # --- per-game breakdown: which characters players chose -------------------------------------
@@ -98,24 +100,28 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
         for key, g in (s.get("games") or {}).items():
             if key not in GAME_LABEL:
                 continue
-            gs = game_stats.setdefault(key, {"players": 0, "turns": 0, "wins": 0, "clips": 0, "chatted": 0})
+            gs = game_stats.setdefault(key, {"players": 0, "turns": 0, "wins": 0, "completions": 0,
+                                             "clips": 0, "chatted": 0})
             if g.get("reached") or g.get("clip"):
                 gs["players"] += 1
             gs["turns"] += g.get("turns", 0)
             if g.get("turns", 0) > 0:
                 gs["chatted"] += 1
-            gs["wins"] += 1 if g.get("won") else 0
+            gs["wins"] += 1 if g.get("won") else 0                  # quest games: objectives met
+            gs["completions"] += 1 if g.get("completed") else 0     # cutscenes: played to the end
             gs["clips"] += 1 if g.get("clip") else 0
     primary = Counter(s.get("primary_game") for s in inbound if s.get("primary_game"))
     L.append("  PER-GAME BREAKDOWN (which characters players chose)")
     if game_stats:
-        L.append(f"    {'game':<17}{'players':>8}{'%':>5}{'chatted':>9}{'turns':>7}{'avg':>6}{'wins':>6}{'clips':>6}")
+        L.append(f"    {'game':<17}{'players':>8}{'%':>5}{'chatted':>9}{'turns':>7}{'avg':>6}{'wins':>6}"
+                 f"{'compl':>7}{'clips':>6}")
         order = sorted(game_stats, key=lambda k: game_stats[k]["players"], reverse=True)
         for key in order:
             gs = game_stats[key]
             avg = gs["turns"] / gs["chatted"] if gs["chatted"] else 0.0
             L.append(f"    {GAME_LABEL[key]:<17}{gs['players']:>8}{100*gs['players']/pdenom:>4.0f}%"
-                     f"{gs['chatted']:>9}{gs['turns']:>7}{avg:>6.1f}{gs['wins']:>6}{gs['clips']:>6}")
+                     f"{gs['chatted']:>9}{gs['turns']:>7}{avg:>6.1f}{gs['wins']:>6}{gs['completions']:>7}"
+                     f"{gs['clips']:>6}")
         mx = max(gs["players"] for gs in game_stats.values()) or 1
         L.append("")
         L.append("    popularity (players who reached each game)")
