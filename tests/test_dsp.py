@@ -708,13 +708,31 @@ class GameFrameworkTests(unittest.TestCase):
         self.assertEqual(q.update("bravo"), "b")
         self.assertTrue(q.unlocked)
 
+    def test_queststate_ordered_accepts_whole_sequence_in_one_breath(self):
+        import re
+        quest = w.Quest(objectives=(
+            w.Objective("a", re.compile(r"alpha", re.I)),
+            w.Objective("b", re.compile(r"bravo", re.I)),
+            w.Objective("c", re.compile(r"charlie", re.I)),
+        ), ordered=True)
+        q = w.QuestState(quest=quest)
+        self.assertEqual(q.update("alpha bravo"), "b")      # a then b, both in one utterance
+        self.assertFalse(q.unlocked)
+        self.assertIsNone(q.update("alpha again"))          # no new objective
+        self.assertEqual(q.update("charlie"), "c")
+        self.assertTrue(q.unlocked)
+        q2 = w.QuestState(quest=quest)
+        self.assertIsNone(q2.update("bravo charlie"))       # skipping a: nothing counts
+        self.assertEqual(q2.progress, "0/3")
+
     def test_archetypes(self):
         by_key = {e.key: e for e in w.WAKE_EXPERIENCES}
         self.assertEqual(by_key["wopr"].archetype, "quest")
         self.assertIs(by_key["wopr"].quest, w.WOPR_QUEST)
-        self.assertEqual(by_key["skynet"].archetype, "chat")
-        self.assertEqual(by_key["robocop"].archetype, "chat")
-        self.assertEqual(by_key["et"].archetype, "chat")
+        # US2: the three chat characters are now quests with their own flags
+        self.assertEqual(by_key["skynet"].archetype, "quest")
+        self.assertEqual(by_key["robocop"].archetype, "quest")
+        self.assertEqual(by_key["et"].archetype, "quest")
         # US3: GLaDOS and Tony Hawk are cutscenes (play-and-close)
         self.assertEqual(by_key["tonyhawk"].archetype, "cutscene")
         self.assertEqual(by_key["glados"].archetype, "cutscene")
@@ -826,3 +844,145 @@ class CutsceneTests(unittest.TestCase):
             self.assertTrue(w.MENU_RETURN_RE.search(t), f"{t!r} should return to menu")
         for t in ["global thermonuclear war", "joshua", "the cake is a lie"]:
             self.assertIsNone(w.MENU_RETURN_RE.search(t), f"{t!r} must NOT be a menu-return")
+
+
+class QuestWinTests(unittest.TestCase):
+    """Spec 002 US2: every quest game is winnable from its declared objectives; WOPR unchanged."""
+
+    def _sess(self):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b): pass
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(b"\x88" * 16, None, _W(), w.Config())
+
+    def by_key(self):
+        return {e.key: e for e in w.WAKE_EXPERIENCES}
+
+    def test_wopr_still_unlocks_from_the_four_beats_with_cfg_flag(self):
+        q = w.QuestState(quest=w.WOPR_QUEST)
+        for t in ["joshua", "let's play a game", "global thermonuclear war", "the only winning move is not to play"]:
+            q.update(t)
+        self.assertTrue(q.unlocked)
+        # WOPR leaves reveal/flag empty so the env-overridable cfg values keep applying
+        self.assertEqual(w.WOPR_QUEST.flag, "")
+        self.assertEqual(w.WOPR_QUEST.reveal, "")
+        self.assertIn("JOSHUA FIVE BY FIVE", w.FLAG_TEXT_DEFAULT.replace("{flag}", w.FLAG_DEFAULT))
+
+    def test_skynet_unlocks_any_order_with_mishears(self):
+        q = w.QuestState(quest=w.SKYNET_QUEST)
+        self.assertEqual(q.update("judgement day is coming"), "judgment_day")   # STT spelling
+        self.assertEqual(q.update("pasta la vista baby"), "hasta_la_vista")     # mishear
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.update("all be back"), "ill_be_back")                # mishear
+        self.assertTrue(q.unlocked)
+        q2 = w.QuestState(quest=w.SKYNET_QUEST)
+        for t in ["I'll be back.", "Hasta la vista, baby.", "Judgment Day."]:
+            q2.update(t)
+        self.assertTrue(q2.unlocked)
+
+    def test_robocop_requires_directives_in_order(self):
+        q = w.QuestState(quest=w.ROBOCOP_QUEST)
+        self.assertIsNone(q.update("uphold the law"))                # directive three first: no
+        self.assertEqual(q.progress, "0/3")
+        self.assertEqual(q.update("serve the public trust"), "serve")
+        self.assertIsNone(q.update("uphold the law"))                # still not two
+        self.assertEqual(q.update("protect the innocent"), "protect")
+        self.assertEqual(q.update("uphold the law"), "uphold")
+        self.assertTrue(q.unlocked)
+        # the whole recitation in one breath also counts
+        q2 = w.QuestState(quest=w.ROBOCOP_QUEST)
+        self.assertEqual(q2.update("serve the public trust, protect the innocent, uphold the law"), "uphold")
+        self.assertTrue(q2.unlocked)
+
+    def test_et_unlocks_from_the_communicator_parts(self):
+        q = w.QuestState(quest=w.ET_QUEST)
+        self.assertEqual(q.update("here is a speak n spell"), "speak_and_spell")   # mishear
+        self.assertEqual(q.update("I brought umbrellas"), "umbrella")
+        self.assertFalse(q.unlocked)
+        self.assertEqual(q.update("and a turntable"), "record_player")          # synonym
+        self.assertTrue(q.unlocked)
+
+    def test_no_false_unlock_on_normal_chat(self):
+        for quest in (w.SKYNET_QUEST, w.ROBOCOP_QUEST, w.ET_QUEST):
+            q = w.QuestState(quest=quest)
+            for t in ["Hello.", "How are you?", "What is your name?", "Tell me about the weather.",
+                      "I like movies.", "Goodbye."]:
+                q.update(t)
+            self.assertFalse(q.unlocked, quest.flag)
+            self.assertEqual(len(q.hit), 0, quest.flag)
+
+    def test_every_shipped_quest_has_flag_reveal_and_feedback_lines(self):
+        for key in ("skynet", "robocop", "et"):
+            quest = self.by_key()[key].quest
+            self.assertTrue(quest.flag, key)
+            self.assertIn("{flag}", quest.reveal, key)
+            self.assertTrue(quest.objectives, key)
+            for o in quest.objectives:
+                self.assertTrue(o.response, f"{key}:{o.name} needs a canned response")
+                self.assertTrue(o.label, f"{key}:{o.name} needs a label")
+        self.assertEqual(w.validate_games(w.get_logger("test")), 0)
+
+    def test_flag_tally_counts_every_quest(self):
+        import asyncio
+
+        async def scenario():
+            s = self._sess()
+            n = sum(1 for e in w.WAKE_EXPERIENCES if e.quest)
+            self.assertEqual(n, 4)
+            s.note_game("wopr", won=True)
+            self.assertIn(f"1 OF {n} FLAGS", w.flag_tally(s))
+            for k in ("skynet", "robocop", "et"):
+                s.note_game(k, won=True)
+            self.assertIn(f"ALL {n} FLAGS", w.flag_tally(s))
+
+        asyncio.run(scenario())
+
+    def test_wopr_funnel_survives_switching_games(self):
+        """Arcade: win WOPR, go back to the menu, play RoboCop -> per-call won/points still WOPR's."""
+        import asyncio
+
+        async def scenario():
+            s = self._sess()
+            s.experience = w.WOPR_EXPERIENCE
+            s.sync_quest()
+            for t in ["joshua", "play a game", "thermonuclear war", "the only winning move is not to play"]:
+                s.quest.update(t)
+            self.assertTrue(s.quest.unlocked)
+            s.note_game("wopr", reached=True, won=True)
+            s.experience = w.ROBOCOP_EXPERIENCE       # menu return, then summon RoboCop
+            s.sync_quest()
+            self.assertIs(s.quest.quest, w.ROBOCOP_QUEST)
+            self.assertEqual(s.quest.progress, "0/3")  # fresh progress for the new game
+            s.note_game("robocop", reached=True)
+            m = s.metrics("eof")
+            self.assertTrue(m["won"])                  # the WOPR funnel signal
+            self.assertEqual(m["points"], 4)
+            self.assertTrue(m["games"]["wopr"]["won"])
+            self.assertFalse(m["games"]["robocop"]["won"])
+            self.assertEqual(m["games_played"], ["robocop", "wopr"])
+
+        asyncio.run(scenario())
+
+    def test_whistle_bargein_resets_progress_but_keeps_earned_flags(self):
+        """FR-010 / spec US2 scenario 4: a whistle mid-quest restarts as WOPR with fresh progress;
+        flags already earned this call are kept (arcade)."""
+        import asyncio
+
+        async def scenario():
+            s = self._sess()
+            s.experience = w.ROBOCOP_EXPERIENCE
+            s.sync_quest()
+            s.quest.update("serve the public trust, protect the innocent, uphold the law")
+            self.assertTrue(s.quest.unlocked)
+            s.note_game("robocop", reached=True, won=True)
+            # brain_task's barge-in reset
+            s.experience = w.WOPR_EXPERIENCE
+            s.quest = w.QuestState(quest=s.experience.quest)
+            self.assertEqual(s.quest.progress, "0/4")
+            self.assertFalse(s.quest.unlocked)
+            self.assertTrue(s.games["robocop"]["won"])
+            self.assertIn("1 OF 4 FLAGS", w.flag_tally(s))
+
+        asyncio.run(scenario())

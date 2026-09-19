@@ -510,8 +510,11 @@ SKYNET_SYSTEM_PROMPT = (
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
     "- Be terse and menacing: one or two short flat sentences, under 35 words.\n"
     "- You are a machine hunting for Sarah Connor and her son John Connor. Ask where they are.\n"
-    "- Occasionally deliver an iconic line: 'I'LL BE BACK.' 'COME WITH ME IF YOU WANT TO LIVE.' "
-    "'HASTA LA VISTA.'\n"
+    "- The caller claims to be from the human resistance. Interrogate them. They prove it by knowing "
+    "three things: what you say when you leave (I'LL BE BACK), what you say before you fire (HASTA "
+    "LA VISTA, BABY), and the day Skynet becomes self-aware (JUDGMENT DAY). Demand each one with a "
+    "riddle or a hint; do NOT say the answers yourself.\n"
+    "- Occasionally deliver an iconic line: 'COME WITH ME IF YOU WANT TO LIVE.' 'TALK TO THE HAND.'\n"
     "- Never break character. Never say you are an AI or a language model.\n"
 )
 SKYNET_GREETING = "CYBERDYNE SYSTEMS MODEL 101 ONLINE. I AM LOOKING FOR SARAH CONNOR. WHERE IS SHE?"
@@ -521,8 +524,11 @@ ROBOCOP_SYSTEM_PROMPT = (
     "Detroit, speaking over a telephone line. Rules you never break:\n"
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
     "- Be clipped, procedural, and flat: one or two short sentences, under 35 words.\n"
-    "- Enforce the law. Cite your prime directives: SERVE THE PUBLIC TRUST, PROTECT THE INNOCENT, "
-    "UPHOLD THE LAW.\n"
+    "- Enforce the law. Your prime directives are: ONE, SERVE THE PUBLIC TRUST. TWO, PROTECT THE "
+    "INNOCENT. THREE, UPHOLD THE LAW. Directive four is classified.\n"
+    "- The caller is being processed. Order them to recite your three prime directives, IN ORDER, "
+    "one at a time: ask for directive one, then two, then three. Give hints (the first word, or "
+    "who it protects) but make them say each directive themselves.\n"
     "- Occasionally deliver an iconic line: 'DEAD OR ALIVE, YOU ARE COMING WITH ME.' 'COME QUIETLY "
     "OR THERE WILL BE TROUBLE.' 'THANK YOU FOR YOUR COOPERATION.' 'YOUR MOVE, CREEP.'\n"
     "- Never break character. Never say you are an AI or a language model.\n"
@@ -537,6 +543,9 @@ ET_SYSTEM_PROMPT = (
     "yourself as E.T., in the third person.\n"
     "- Use your few known phrases often: 'E.T. PHONE HOME.' 'ELLIOTT.' 'BE GOOD.' 'OUCH.' 'HOME.'\n"
     "- You are innocent, curious, and kind. You miss Elliott and your home planet.\n"
+    "- You are building a machine to phone home and need the caller to bring three things: a SPEAK "
+    "AND SPELL, an UMBRELLA, and a RECORD PLAYER. Ask for them one at a time in your broken English "
+    "('E.T. NEED... SPEAK AND SPELL?'). Say OUCH if they bring the wrong thing.\n"
     "- Never break character. Never say you are an AI or a language model.\n"
 )
 ET_GREETING = "ELLIOTT? E.T. PHONE HOME."
@@ -579,15 +588,16 @@ WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead
 
 # --- Game framework (spec 002) -------------------------------------------------------------------
 # A game is declared as data on its Experience: a Quest (interactive objectives -> win -> flag) or a
-# Cutscene (play a clip -> optional message -> goodbye -> end the call). WOPR is a Quest; the other
-# characters keep their current shape until US2/US3 give them real quests/cutscenes.
+# Cutscene (play a clip -> optional message -> optional goodbye -> back to the menu, or end the call).
+# Adding a game = one Experience(...) below with a wake phrase and a quest=/cutscene= block. Nothing
+# in the call loop, idle listener, recording, or stats needs to change.
 @dataclasses.dataclass(frozen=True)
 class Objective:
     """One goal inside a Quest, matched from a caller utterance with a tolerant regex."""
     name: str
     matcher: "re.Pattern"
     label: str = ""
-    response: str = ""      # optional line spoken when this objective is newly hit (reserved)
+    response: str = ""      # optional canned line spoken the turn this objective is hit (skips the LLM)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -623,6 +633,58 @@ WOPR_QUEST = Quest(
                      for name, rx in MOVIE_BEATS.items()),
     ordered=False, fanfare=True)
 
+# Skynet: the caller proves they are resistance by knowing three lines from the films (any order).
+# Matchers accept common local-STT mishears ("all be back", "pasta la vista", "judgement day").
+SKYNET_QUEST = Quest(
+    objectives=(
+        Objective("ill_be_back", re.compile(r"\b(i'?ll|i will|all|i'd|i)\s+be\s+back\b", re.I),
+                  "I'll be back", response="AFFIRMATIVE. I WILL BE BACK."),
+        Objective("hasta_la_vista",
+                  re.compile(r"\b(hasta|asta|pasta|hasto)\s+la\s+(vista|vesta|feast)\b|\bhasta\s+la\b|"
+                             r"\bla\s+vista\b", re.I),
+                  "Hasta la vista", response="HASTA LA VISTA, BABY."),
+        Objective("judgment_day", re.compile(r"\bjudge?ment\b", re.I),
+                  "Judgment Day",
+                  response="JUDGMENT DAY. AUGUST TWENTY NINTH, NINETEEN NINETY SEVEN. "
+                           "THREE BILLION HUMAN LIVES."),
+    ),
+    ordered=False,
+    reveal="YOU KNOW THE FUTURE. YOU ARE WITH THE RESISTANCE. COME WITH ME IF YOU WANT TO LIVE. "
+           "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
+    flag="CYBERDYNE MODEL ONE ZERO ONE", fanfare=True)
+
+# RoboCop: recite the three prime directives IN ORDER (ordered=True; one breath is fine).
+ROBOCOP_QUEST = Quest(
+    objectives=(
+        Objective("serve", re.compile(r"\bserve\b.*\b(public|trust)\b|\bpublic\s+trust\b", re.I),
+                  "Serve the public trust", response="DIRECTIVE ONE CONFIRMED. SERVE THE PUBLIC TRUST."),
+        Objective("protect", re.compile(r"\bprotect\b.*\binnocen\w*|\binnocen\w*", re.I),
+                  "Protect the innocent", response="DIRECTIVE TWO CONFIRMED. PROTECT THE INNOCENT."),
+        Objective("uphold", re.compile(r"\bup\s?hold\b|\bthe\s+law\b", re.I),
+                  "Uphold the law", response="DIRECTIVE THREE CONFIRMED. UPHOLD THE LAW."),
+    ),
+    ordered=True,
+    reveal="ALL PRIME DIRECTIVES CONFIRMED. THANK YOU FOR YOUR COOPERATION. "
+           "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
+    flag="DIRECTIVE FOUR CLASSIFIED", fanfare=True)
+
+# E.T.: bring the three parts of the communicator (any order); the reveal is E.T. phoning home.
+ET_QUEST = Quest(
+    objectives=(
+        Objective("speak_and_spell", re.compile(r"\bspeak\b.{0,6}\bspell\b|\bspeak\s*n\s*spell\b", re.I),
+                  "Speak and Spell", response="SPEAK AND SPELL. E.T. TALK. GOOD."),
+        Objective("umbrella", re.compile(r"\bumbrell\w*|\bum\s?brella\b", re.I),
+                  "Umbrella", response="UMBRELLA. CATCH THE SKY. GOOD."),
+        Objective("record_player",
+                  re.compile(r"\brecord\s+player\b|\bturn\s?table\b|\bsaw\s+blade\b|\bcoffee\s+can\b|"
+                             r"\bcoat\s+hanger\b", re.I),
+                  "Record player", response="RECORD PLAYER. SPIN. GOOD."),
+    ),
+    ordered=False,
+    reveal="PHONE. HOME. E.T. PHONE HOME. THEY COME. YOUR FLAG IS {flag}. AGAIN. YOUR FLAG IS {flag}. "
+           "BE GOOD.",
+    flag="I WILL BE RIGHT HERE", fanfare=True)
+
 
 @dataclasses.dataclass(frozen=True)
 class Experience:
@@ -655,11 +717,13 @@ WOPR_EXPERIENCE = Experience(
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
     wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b", re.I),
-    voice="en-us+m1", speed=108, pitch=6)      # T-800: deepest, slowest, most deliberate
+    voice="en-us+m1", speed=108, pitch=6,      # T-800: deepest, slowest, most deliberate
+    quest=SKYNET_QUEST)
 ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
-    voice="en-us+klatt", speed=133, pitch=30)  # processed, clipped, monotone
+    voice="en-us+klatt", speed=133, pitch=30,  # processed, clipped, monotone
+    quest=ROBOCOP_QUEST)
 # GLaDOS easter egg (cutscene): the passphrase plays "Still Alive", says goodbye, then hangs up.
 GLADOS_EXPERIENCE = Experience(
     "glados",
@@ -668,7 +732,8 @@ GLADOS_EXPERIENCE = Experience(
 ET_EXPERIENCE = Experience(
     "et", ET_SYSTEM_PROMPT, ET_GREETING,
     wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|phone home)\b", re.I),
-    voice="en-us+croak", speed=118, pitch=45)  # raspy, gravelly, childlike
+    voice="en-us+croak", speed=118, pitch=45,  # raspy, gravelly, childlike
+    quest=ET_QUEST)
 # Tony Hawk (cutscene): the "Do A Kickflip" intro clip -> one hyped robot pep talk -> goodbye -> hang up.
 TONYHAWK_EXPERIENCE = Experience(
     "tonyhawk", TONYHAWK_SYSTEM_PROMPT, TONYHAWK_GREETING,
@@ -768,14 +833,15 @@ class QuestState:
         objs = self.quest.objectives
         newly = None
         if self.quest.ordered:
-            # only the next unmet objective may be satisfied by this utterance
+            # only the next unmet objective may be satisfied; if it is, the one after it may be too
+            # (so reciting the whole sequence in one breath counts), but never out of order
             for o in objs:
                 if o.name in self.hit:
                     continue
-                if o.matcher.search(text or ""):
-                    self.hit.add(o.name)
-                    newly = o.name
-                break
+                if not o.matcher.search(text or ""):
+                    break
+                self.hit.add(o.name)
+                newly = o.name
         else:
             for o in objs:
                 if o.name not in self.hit and o.matcher.search(text or ""):
@@ -1360,6 +1426,7 @@ class CallSession:
         if self.is_callback:
             self.experience = WOPR_EXPERIENCE   # callbacks are a WOPR feature (Professor Falken)
         self.quest = QuestState(quest=self.experience.quest)
+        self.wopr_quest_snapshot: QuestState | None = None   # WOPR progress kept across a game switch
         # A callback resumes the quest progress the caller had when they hung up, so someone who
         # was one line short of the flag can finish it when WOPR rings back.
         global _pending_quest
@@ -1386,6 +1453,21 @@ class CallSession:
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.t_start) * 1000.0
+
+    def sync_quest(self) -> None:
+        """Point the quest engine at the active game (arcade mode switches games within a call).
+        WOPR's progress is snapshotted so the per-call WOPR funnel (points/beats/won) survives."""
+        if self.quest.quest is not self.experience.quest:
+            if self.quest.quest is WOPR_QUEST:
+                self.wopr_quest_snapshot = self.quest
+            self.quest = QuestState(quest=self.experience.quest)
+
+    @property
+    def wopr_quest(self) -> "QuestState":
+        """WOPR's quest state for this call: live if WOPR is the active game, else the snapshot."""
+        if self.quest.quest is WOPR_QUEST:
+            return self.quest
+        return self.wopr_quest_snapshot or QuestState(quest=WOPR_QUEST)
 
     def note_game(self, key: str, *, reached: bool = False, turn: bool = False, won: bool = False,
                   clip: bool = False, completed: bool = False) -> None:
@@ -1431,9 +1513,10 @@ class CallSession:
             "attract_ms": None if self.callback_kind else (round(self.t_first_detect_ms)
                                                            if self.t_first_detect_ms is not None else None),
             "whistles": self.detector.fires,          # first whistle + any barge-ins
-            "points": len(self.quest.hit),
-            "beats": sorted(self.quest.hit),
-            "won": self.quest.unlocked,
+            # --- the WOPR funnel (the original human experiment); other games' wins live in games[] ---
+            "points": len(self.wopr_quest.hit),
+            "beats": sorted(self.wopr_quest.hit),
+            "won": self.wopr_quest.unlocked or bool(self.games.get("wopr", {}).get("won")),
             "first_point_ms": round(self.t_first_point_ms) if self.t_first_point_ms is not None else None,
             "first_point_after_whistle_ms": (round(self.t_first_point_ms - self.t_first_detect_ms)
                                              if self.t_first_point_ms is not None and self.t_first_detect_ms is not None
@@ -1621,8 +1704,8 @@ async def end_call(sess: CallSession) -> None:
 
 
 async def run_cutscene(sess: CallSession) -> None:
-    """Cutscene archetype: intro → clip → optional message → goodbye → end the call. This runner is
-    complete; US3 wires the cutscene content onto GLaDOS and Tony Hawk. No game triggers it yet."""
+    """Cutscene archetype: intro → clip → optional message → optional goodbye → then either back to
+    the menu (arcade default) or end the call (Cutscene.end_call, used by the goodbye sign-off)."""
     cfg = sess.cfg
     cs = sess.experience.cutscene
     sess.note_game(sess.experience.key, reached=True, clip=True)
@@ -1726,9 +1809,8 @@ async def conversation(sess: CallSession) -> None:
     except PipelineError as e:
         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
     # Ensure the quest engine matches the active game (a fresh call arrives as the greeter, then this
-    # conversation runs as the summoned game). Preserve any carried callback progress.
-    if sess.quest.quest is not sess.experience.quest:
-        sess.quest = QuestState(quest=sess.experience.quest)
+    # conversation runs as the summoned game). Preserves carried callback progress and WOPR's snapshot.
+    sess.sync_quest()
     while True:
         sess.set_state(CallState.CAPTURING)
         sess.vad.reset()
@@ -1788,39 +1870,51 @@ async def conversation(sess: CallSession) -> None:
                     continue
                 if declines:
                     sess.chess_offered = False   # caller passed; fall through to a normal reply
-            if is_wopr and cfg.enable_flag and not sess.quest.unlocked:
+            # --- the Quest archetype: objectives -> win -> flag (any game that declares a quest) ---
+            quest = sess.experience.quest
+            if quest is not None and cfg.enable_flag and not sess.quest.unlocked:
                 beat = sess.quest.update(text)
                 if beat:
-                    if sess.t_first_point_ms is None:
+                    if is_wopr and sess.t_first_point_ms is None:
                         sess.t_first_point_ms = sess.elapsed_ms()
-                    sess.log.info(kv(event="quest", beat=beat, progress=sess.quest.progress))
+                    sess.log.info(kv(event="quest", key=sess.experience.key, beat=beat,
+                                     progress=sess.quest.progress))
                 if sess.quest.unlocked:
-                    if sess.t_win_ms is None:
+                    if is_wopr and sess.t_win_ms is None:
                         sess.t_win_ms = sess.elapsed_ms()
-                    reveal = cfg.flag_text.replace("{flag}", cfg.flag)
-                    sess.log.info(kv(event="flag_unlocked", flag=cfg.flag))
-                    sess.note_game("wopr", won=True)
+                    # WOPR's reveal/flag stay env-overridable (WOPR_FLAG, WOPR_FLAG_TEXT); every other
+                    # quest declares its own. The reveal voice is the game's own unless declared, except
+                    # WOPR keeps its Johnny-5 reveal voice from cfg.
+                    flag = quest.flag or cfg.flag
+                    reveal = (quest.reveal or cfg.flag_text).replace("{flag}", flag)
+                    sess.log.info(kv(event="flag_unlocked", key=sess.experience.key, flag=flag))
+                    sess.note_game(sess.experience.key, won=True)
                     sess.history.append({"role": "user", "content": text})
                     sess.history.append({"role": "assistant", "content": reveal})
                     del sess.history[:-HISTORY_MAX_TURNS]
                     sess.record_turn(text, reveal, "flag")
                     try:
-                        frames = await tts_frames(reveal, sess.log, voice=cfg.flag_voice,
-                                                  speed=cfg.flag_speed, pitch=cfg.flag_pitch)
+                        voice = quest.reveal_voice or (cfg.flag_voice if is_wopr else sess.experience.voice)
+                        speed = quest.reveal_speed or (cfg.flag_speed if is_wopr else sess.experience.speed)
+                        pitch = quest.reveal_pitch or (cfg.flag_pitch if is_wopr else sess.experience.pitch)
+                        frames = await tts_frames(reveal, sess.log, voice=voice, speed=speed, pitch=pitch)
                         sess.set_state(CallState.SPEAKING)
-                        await sess.play(wink_frames(), "flag_fanfare")
-                        if FLAG_INTRO_FRAMES:
-                            await sess.play(FLAG_INTRO_FRAMES, "flag_intro")
+                        if quest.fanfare:
+                            await sess.play(wink_frames(), "flag_fanfare")
+                        reveal_intro = (INTRO_FRAMES.get(quest.reveal_intro) if quest.reveal_intro
+                                        else FLAG_INTRO_FRAMES if is_wopr else None)
+                        if reveal_intro:
+                            await sess.play(reveal_intro, "flag_intro")
                         await sess.play(frames, "flag")
                         await sess.play(await tts_frames(flag_tally(sess), sess.log), "flag_tally")
-                        if cfg.enable_chess:
+                        if is_wopr and cfg.enable_chess:
                             # WOPR's post-mortem, straight from the film: offer a nice game of chess.
                             sess.chess_offered = True
                             await sess.play(await tts_frames(cfg.chess_offer, sess.log), "chess_offer")
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                     continue
-                if beat == "joshua":
+                if is_wopr and beat == "joshua":
                     sess.history.append({"role": "user", "content": text})
                     sess.history.append({"role": "assistant", "content": cfg.joshua_text})
                     del sess.history[:-HISTORY_MAX_TURNS]
@@ -1831,6 +1925,24 @@ async def conversation(sess: CallSession) -> None:
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                     continue
+                if beat:
+                    # A newly-hit objective with a canned response: instant in-character feedback, no
+                    # LLM round trip (the generic form of WOPR's Joshua line).
+                    obj = next((o for o in quest.objectives if o.name == beat), None)
+                    if obj is not None and obj.response:
+                        sess.history.append({"role": "user", "content": text})
+                        sess.history.append({"role": "assistant", "content": obj.response})
+                        del sess.history[:-HISTORY_MAX_TURNS]
+                        sess.record_turn(text, obj.response, "objective")
+                        try:
+                            sess.set_state(CallState.SPEAKING)
+                            await sess.play(await tts_frames(obj.response, sess.log,
+                                                             voice=sess.experience.voice,
+                                                             speed=sess.experience.speed,
+                                                             pitch=sess.experience.pitch), "objective")
+                        except PipelineError as e:
+                            sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                        continue
             if cfg.stub_llm:
                 reply = stub_reply()
                 sess.log.info(kv(event="llm", ms=0.0, stub=1, chars=len(reply)))
@@ -1978,7 +2090,7 @@ def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
     global _last_callback_ts, _pending_quest
     if not cfg.enable_callback or sess.is_callback:
         return
-    if sess.quest.unlocked:
+    if sess.wopr_quest.unlocked:
         kind, dial = "win", cfg.callback_win_dial
     elif sess.played_gtw:
         kind, dial = "sim", cfg.callback_dial
@@ -1989,7 +2101,7 @@ def maybe_schedule_callback(sess: "CallSession", cfg: Config) -> None:
         sess.log.info(kv(event="callback_skipped", reason="cooldown", kind=kind))
         return
     _last_callback_ts = now
-    _pending_quest = set(sess.quest.hit)   # hand the callback whatever beats they had earned
+    _pending_quest = set(sess.wopr_quest.hit)   # hand the callback whatever beats they had earned
     t = asyncio.create_task(_do_callback(cfg, dial, sess.call_hex, kind))
     _pending_callbacks.add(t)
     t.add_done_callback(_pending_callbacks.discard)
@@ -2135,7 +2247,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--flag-voice", default=env.get("WOPR_FLAG_VOICE", FLAG_VOICE_DEFAULT), help="espeak-ng voice for the flag reveal (Johnny 5)")
     p.add_argument("--flag-speed", type=int, default=int(env.get("WOPR_FLAG_SPEED", FLAG_SPEED_DEFAULT)))
     p.add_argument("--flag-pitch", type=int, default=int(env.get("WOPR_FLAG_PITCH", FLAG_PITCH_DEFAULT)))
-    p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable the movie-quest flag")
+    p.add_argument("--no-flag", action="store_true", default=env.get("WOPR_NO_FLAG", "") in ("1", "true", "yes"), help="disable quest wins/flags for every game (WOPR's movie quest included)")
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
     p.add_argument("--no-chess", action="store_true", default=env.get("WOPR_NO_CHESS", "") in ("1", "true", "yes"), help="disable the post-flag move-by-move chess game")
     p.add_argument("--no-wake", action="store_true", default=env.get("WOPR_NO_WAKE", "") in ("1", "true", "yes"), help="disable listening for character wake phrases during the attract loop")

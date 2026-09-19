@@ -76,7 +76,7 @@ requires only a definition, no call-loop edits.
 summonable and behaves per archetype; confirm no shared call-loop code changed to add it.
 
 - [X] T009 [US1] Redefine `WOPR_EXPERIENCE` in `wopr_daemon.py` with `quest=WOPR_QUEST` (four beats from `MOVIE_BEATS`, `ordered=False`, `fanfare=True`; `reveal`/`flag` left empty so WOPR keeps the env-overridable `cfg.flag_text`/`cfg.flag`)
-- [ ] T010 [US1] Give `SKYNET_EXPERIENCE`, `ROBOCOP_EXPERIENCE`, `ET_EXPERIENCE` in `wopr_daemon.py` a `quest=Quest(...)` so they route through the quest archetype (their real objectives/flags are authored in T016–T018; this task may land together with those). Until T015 lands, the win path is WOPR-only, so a non-WOPR quest is harmless but unwinnable — do T015 in the same change set
+- [X] T010 [US1] Give `SKYNET_EXPERIENCE`, `ROBOCOP_EXPERIENCE`, `ET_EXPERIENCE` in `wopr_daemon.py` a `quest=Quest(...)` so they route through the quest archetype (their real objectives/flags are authored in T016–T018; this task may land together with those). Until T015 lands, the win path is WOPR-only, so a non-WOPR quest is harmless but unwinnable — do T015 in the same change set
 - [X] T011 [P] [US1] Redefine `GLADOS_EXPERIENCE` and `TONYHAWK_EXPERIENCE` in `wopr_daemon.py` as `cutscene=Cutscene(...)` (GLaDOS: `clip="song"`, no message; Tony Hawk: intro clip as the audio, `message_mode="generated"` with a fixed fallback)
 - [X] T012 [US1] Ensure greeter/goodbye remain utility (excluded from `GAME_KEYS`) in `wopr_daemon.py`; the greeter is an `audio="operator"` clip, goodbye is the exit cutscene
 - [X] T013 [US1] Unit test in `tests/test_dsp.py` (`test_minimal_game_definitions_validate`) proving a minimal ad-hoc Game of each archetype validates and is selectable via `match_experience` with no edits outside the definition
@@ -87,7 +87,7 @@ summonable and behaves per archetype; confirm no shared call-loop code changed t
 
 ---
 
-## Phase 4: US2 — Quest win with a flag (Priority: P1) ⬅️ NEXT
+## Phase 4: US2 — Quest win with a flag (Priority: P1)
 
 **Goal**: Interactive quests award a flag on completion for *any* quest game, not just WOPR; WOPR
 is byte-identical; Skynet, RoboCop, E.T. have real objectives + flags with a proper reveal.
@@ -101,14 +101,19 @@ reveal from `cfg.flag_text`/`cfg.flag`, uses `cfg.flag_voice/speed/pitch`, alway
 `FLAG_INTRO_FRAMES`, and calls `sess.note_game("wopr", won=True)`. The three chat characters have
 no `quest`. `flag_tally(sess)` already counts every experience with a `quest`.
 
-- [ ] T015 [US2] Generalize the quest-win path in `conversation()` (`wopr_daemon.py`, the block starting `if is_wopr and cfg.enable_flag and not sess.quest.unlocked:`): gate on `sess.experience.quest is not None and cfg.enable_flag`; resolve reveal text as `quest.reveal or cfg.flag_text` with `{flag}` → `quest.flag or cfg.flag`; reveal voice/speed/pitch as `quest.reveal_voice/speed/pitch` falling back to `cfg.flag_*` for WOPR and to the game's own voice otherwise; play the wink only if `quest.fanfare`; play `INTRO_FRAMES[quest.reveal_intro]` if set, else `FLAG_INTRO_FRAMES` only for WOPR; log `event=flag_unlocked key=… flag=…`; call `sess.note_game(sess.experience.key, won=True)`; keep `flag_tally`; keep the chess offer and the `joshua` beat line WOPR-only. Leave `t_first_point_ms`/`t_win_ms` and the per-call top-level `won`/`points`/`beats` sourced from the WOPR quest state so `analyze.py`'s WOPR funnel stays correct
-- [ ] T016 [P] [US2] Author Skynet's quest in `SKYNET_EXPERIENCE` (`wopr_daemon.py`): tolerant-regex objectives (e.g. `sarah_connor` "Sarah Connor", `john_connor` "John Connor", `ill_be_back` "I'll be back" — accept common STT mishears like "connor/conner/kahn"), `ordered=False`, reveal `"COME WITH ME IF YOU WANT TO LIVE. YOUR FLAG IS {flag}."`, flag `"CYBERDYNE-MODEL-101"` (author-editable), `fanfare=True`, no reveal voice override
-- [ ] T017 [P] [US2] Author RoboCop's quest in `ROBOCOP_EXPERIENCE` (`wopr_daemon.py`): three prime-directive objectives `serve` / `protect` / `uphold` (`serve the public`, `protect the innocent`, `uphold the law`, tolerant of mishears), `ordered=False`, reveal `"THANK YOU FOR YOUR COOPERATION. YOUR FLAG IS {flag}."`, flag `"PRIME-DIRECTIVE-4-CLASSIFIED"` (author-editable), `fanfare=True`
-- [ ] T018 [P] [US2] Author E.T.'s quest in `ET_EXPERIENCE` (`wopr_daemon.py`): phone-building objectives (e.g. `speak_and_spell`, `umbrella`, `saw_blade`/`record player`, plus `phone_home`), `ordered=False`, reveal `"E.T. PHONE HOME. YOUR FLAG IS {flag}."`, flag `"REESES-PIECES-1982"` (author-editable), `fanfare=True`
-- [ ] T019 [US2] Unit tests in `tests/test_dsp.py` (new `QuestWinTests` or extend `GameFrameworkTests`): WOPR still unlocks from the four beats and its reveal text still substitutes `cfg.flag`; each of Skynet/RoboCop/E.T. unlocks from its objectives (canonical phrasing and one near-miss STT spelling each); `flag_tally` reports `n of 4` after one win and "ALL 4" after four; `validate_games` reports 0 invalid on the shipped roster
-- [ ] T020 [US2] Barge-in regression in `tests/test_dsp.py`: after a whistle mid-quest (simulate `brain_task`'s reset: `sess.experience = WOPR_EXPERIENCE; sess.quest = QuestState(quest=sess.experience.quest)`), quest progress is empty and `sess.games` keeps any previously earned `won` flags for the call (arcade persistence)
+- [X] T015 [US2] Generalize the quest-win path in `conversation()` (`wopr_daemon.py`, the block starting `if is_wopr and cfg.enable_flag and not sess.quest.unlocked:`): gate on `sess.experience.quest is not None and cfg.enable_flag`; resolve reveal text as `quest.reveal or cfg.flag_text` with `{flag}` → `quest.flag or cfg.flag`; reveal voice/speed/pitch as `quest.reveal_voice/speed/pitch` falling back to `cfg.flag_*` for WOPR and to the game's own voice otherwise; play the wink only if `quest.fanfare`; play `INTRO_FRAMES[quest.reveal_intro]` if set, else `FLAG_INTRO_FRAMES` only for WOPR; log `event=flag_unlocked key=… flag=…`; call `sess.note_game(sess.experience.key, won=True)`; keep `flag_tally`; keep the chess offer and the `joshua` beat line WOPR-only. Leave `t_first_point_ms`/`t_win_ms` and the per-call top-level `won`/`points`/`beats` sourced from the WOPR quest state so `analyze.py`'s WOPR funnel stays correct
+- [X] T016 [P] [US2] Author Skynet's quest in `SKYNET_EXPERIENCE` (`wopr_daemon.py`): tolerant-regex objectives (e.g. `sarah_connor` "Sarah Connor", `john_connor` "John Connor", `ill_be_back` "I'll be back" — accept common STT mishears like "connor/conner/kahn"), `ordered=False`, reveal `"COME WITH ME IF YOU WANT TO LIVE. YOUR FLAG IS {flag}."`, flag `"CYBERDYNE-MODEL-101"` (author-editable), `fanfare=True`, no reveal voice override
+- [X] T017 [P] [US2] Author RoboCop's quest in `ROBOCOP_EXPERIENCE` (`wopr_daemon.py`): three prime-directive objectives `serve` / `protect` / `uphold` (`serve the public`, `protect the innocent`, `uphold the law`, tolerant of mishears), `ordered=False`, reveal `"THANK YOU FOR YOUR COOPERATION. YOUR FLAG IS {flag}."`, flag `"PRIME-DIRECTIVE-4-CLASSIFIED"` (author-editable), `fanfare=True`
+- [X] T018 [P] [US2] Author E.T.'s quest in `ET_EXPERIENCE` (`wopr_daemon.py`): phone-building objectives (e.g. `speak_and_spell`, `umbrella`, `saw_blade`/`record player`, plus `phone_home`), `ordered=False`, reveal `"E.T. PHONE HOME. YOUR FLAG IS {flag}."`, flag `"REESES-PIECES-1982"` (author-editable), `fanfare=True`
+- [X] T019 [US2] Unit tests in `tests/test_dsp.py` (new `QuestWinTests` or extend `GameFrameworkTests`): WOPR still unlocks from the four beats and its reveal text still substitutes `cfg.flag`; each of Skynet/RoboCop/E.T. unlocks from its objectives (canonical phrasing and one near-miss STT spelling each); `flag_tally` reports `n of 4` after one win and "ALL 4" after four; `validate_games` reports 0 invalid on the shipped roster
+- [X] T020 [US2] Barge-in regression in `tests/test_dsp.py`: after a whistle mid-quest (simulate `brain_task`'s reset: `sess.experience = WOPR_EXPERIENCE; sess.quest = QuestState(quest=sess.experience.quest)`), quest progress is empty and `sess.games` keeps any previously earned `won` flags for the call (arcade persistence)
 
 **Checkpoint**: Four quests are winnable; WOPR regression proven; `won` recorded per game key.
+✅ Done 2026-09-18 (86 tests). Content as shipped: Skynet = I'll be back / hasta la vista / Judgment Day
+(any order, flag `CYBERDYNE MODEL ONE ZERO ONE`); RoboCop = the three prime directives **in order**
+(flag `DIRECTIVE FOUR CLASSIFIED`); E.T. = Speak & Spell / umbrella / record player (any order, flag
+`I WILL BE RIGHT HERE`). Each objective has a canned `response` line spoken on hit (no LLM round trip).
+The per-call `won`/`points`/`beats` fields stay the WOPR funnel via `CallSession.wopr_quest`.
 
 ---
 
@@ -130,7 +135,7 @@ menu; "goodbye" = sign-off clip → hang up; one teardown, recording + stats wri
 
 ---
 
-## Phase 6: US4 — Analytics: wins vs completions (Priority: P2)
+## Phase 6: US4 — Analytics: wins vs completions (Priority: P2) ⬅️ NEXT
 
 **Goal**: Per-archetype completion signal recorded and reported; backward compatible.
 
@@ -153,7 +158,7 @@ menu; "goodbye" = sign-off clip → hang up; one teardown, recording + stats wri
 - [ ] T032 Run `harness.py` (stub daemon on 9093) to confirm the 20 ms pacing and detector are unaffected by the framework changes
 - [ ] T033 Walk quickstart.md steps 2–7 on the mini (after T040 updates it for arcade mode): WOPR regression, a RoboCop win with tally, GLaDOS/Tony Hawk back to menu, "goodbye" hangs up once, analytics wins vs completions, offline check
 - [ ] T034 [P] Add a "Games & the game framework" section to `README.md` (after "Movie-quest flag") describing the two archetypes, arcade mode (menu return, goodbye exit, flag tally), how to add a game with one `Experience(... quest=/cutscene=...)` declaration, the per-quest flags, and the new `completed`/`completions` stats fields; update the analysis-engine section for the new column
-- [ ] T035 [P] Refresh the stale `run_cutscene` docstring in `wopr_daemon.py` ("No game triggers it yet" is false) and the section-header comment above `Objective` ("the other characters keep their current shape until US2/US3"); commit and push to `therealcybermattlee/ReadyPhreakerOne`
+- [ ] T035 [P] Final commit and push to `therealcybermattlee/ReadyPhreakerOne` (the stale `run_cutscene` docstring and `Objective` section comment were refreshed with US2)
 
 ---
 
