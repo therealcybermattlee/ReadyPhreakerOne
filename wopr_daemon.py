@@ -570,9 +570,9 @@ TONYHAWK_GREETING = ("STOKED YOU CALLED. YOU CAN TOTALLY LAND THAT KICKFLIP. "
 # The greeter is audio-only: a menu that loops on pickup and a hints clip on "operator". This is
 # the TTS fallback for the hints clip and the basis for the recording script.
 OPERATOR_HINTS_DEFAULT = (
-    "HERE IS WHAT YOU CAN DO. TO REACH A CERTAIN WAR COMPUTER, WHISTLE TWENTY SIX HUNDRED HERTZ, "
-    "OR SAY JOSHUA. SAY SARAH CONNOR, OR JOHN CONNOR. SAY ROBOCOP. OR SAY: THE CAKE IS A LIE. "
-    "GO ON. TRY ONE."
+    "HERE IS WHAT YOU CAN DO. SAY JOSHUA TO REACH A CERTAIN WAR COMPUTER. SAY SARAH CONNOR, OR "
+    "JOHN CONNOR. SAY ROBOCOP. SAY E.T. SAY KICKFLIP. SAY THE SECRET WORD. OR SAY: THE CAKE IS A "
+    "LIE. WHISTLE AGAIN ANY TIME TO COME BACK HERE. GO ON. TRY ONE."
 )
 # TTS fallback for the "goodbye" sign-off clip (played when the caller says bye/thanks).
 GOODBYE_TEXT_DEFAULT = "THANKS FOR PLAYING, HACKER. COME BACK SOON."
@@ -1335,6 +1335,8 @@ class Config:
     no_stt: bool = False
     stt_prompt: str = STT_PROMPT_DEFAULT
     enable_wake: bool = True                # listen for character wake phrases during the attract loop
+    enable_seize: bool = True               # the line is dead until 2600 Hz seizes the trunk (the gate)
+    seize_timeout: float = 90.0             # hang up an un-seized line after this many seconds (0 = never)
     wake_prompt: str = WAKE_PROMPT_DEFAULT
     transcript: str = ""
     sessions: str = ""
@@ -1411,7 +1413,11 @@ class CallSession:
         self.history: list[dict] = []
         self.detected_evt = asyncio.Event()
         self.utterance_evt = asyncio.Event()
-        self.experience = GREETER_EXPERIENCE    # default host; whistle/wake phrases summon the games
+        self.experience = GREETER_EXPERIENCE    # default host; wake phrases summon the games
+        # The gate: the caller hears nothing and no wake phrase works until 2600 Hz seizes the trunk.
+        # Every whistle (first or later) drops the caller at the menu. Callbacks skip the gate.
+        self.seized = not cfg.enable_seize
+        self.whistle_pending = False            # a whistle fired; brain_task answers with a wink + menu
         self.idle_vad = VadState()              # separate VAD for wake-phrase listening while ARMED
         self.idle_utt_evt = asyncio.Event()
         self.idle_utterance = b""
@@ -1434,6 +1440,7 @@ class CallSession:
         self.is_callback = self.callback_kind is not None
         if self.is_callback:
             self.experience = WOPR_EXPERIENCE   # callbacks are a WOPR feature (Professor Falken)
+            self.seized = True                  # WOPR rang them; no gate
         self.quest = QuestState(quest=self.experience.quest)
         self.wopr_quest_snapshot: QuestState | None = None   # WOPR progress kept across a game switch
         # A callback resumes the quest progress the caller had when they hung up, so someone who
@@ -1519,6 +1526,7 @@ class CallSession:
             "call": self.call_hex, "callback": self.callback_kind,
             "duration_ms": round(self.elapsed_ms()),
             "whistled": self.t_first_detect_ms is not None,
+            "seized": self.seized,                    # the trunk was opened (2600 Hz, or the gate is off)
             "attract_ms": None if self.callback_kind else (round(self.t_first_detect_ms)
                                                            if self.t_first_detect_ms is not None else None),
             "whistles": self.detector.fires,          # first whistle + any barge-ins
@@ -1579,15 +1587,14 @@ class CallSession:
                              t_ms=self.elapsed_ms(), n=self.detector.fires))
             if self.t_first_detect_ms is None:
                 self.t_first_detect_ms = self.elapsed_ms()
-            self.experience = WOPR_EXPERIENCE       # the whistle always summons WOPR
-            self.detected_evt.set()
+            self.on_whistle()
         if self.state is CallState.CAPTURING and not masked:
             utt = self.vad.update(win)
             if utt is not None:
                 self.utterance = utt
                 self.log.info(kv(event="utterance", ms=len(utt) / 16, floor=self.vad.noise_floor))
                 self.utterance_evt.set()
-        elif self.state is CallState.ARMED and self.cfg.enable_wake and not masked:
+        elif self.state is CallState.ARMED and self.cfg.enable_wake and self.seized and not masked:
             # Idle: collect the caller's speech for the wake listener — but NOT while the menu is
             # playing, or its sidetone (the menu bleeding into the mouthpiece) would be transcribed
             # and could self-trigger a game. Listen only in the gaps between menu repeats.
@@ -1598,6 +1605,28 @@ class CallSession:
                 if utt is not None:
                     self.idle_utterance = utt
                     self.idle_utt_evt.set()
+
+    def on_whistle(self) -> None:
+        """2600 Hz heard. The first whistle seizes the trunk (the line was dead until now); every
+        whistle, first or later, drops the caller at the menu. brain_task plays the wink."""
+        if not self.seized:
+            self.seized = True
+            self.log.info(kv(event="seize", t_ms=round(self.elapsed_ms())))
+        self.whistle_pending = True
+        self.detected_evt.set()
+
+    def next_idle_frame(self) -> "bytes | None":
+        """The frame to send when nothing is queued: the menu loop once the trunk is seized and the
+        session is idle; otherwise None (silence). A dead line stays dead until the whistle."""
+        if self.state is not CallState.ARMED or not self.seized or not ATTRACT_FRAMES:
+            return None
+        frame_body = ATTRACT_FRAMES[self.attract_idx % len(ATTRACT_FRAMES)]
+        self.attract_idx += 1
+        # While the menu is actually speaking (non-silent frame), hold off the wake listener so
+        # its sidetone isn't transcribed. The silence-pad frames between repeats leave it open.
+        if frame_body != _ATTRACT_SILENCE:
+            self.attract_speaking_until = time.monotonic() + 0.3
+        return frame_body
 
     # --- audio out -------------------------------------------------------------------------
     def note_outbound_window(self, win: np.ndarray) -> None:
@@ -1677,13 +1706,8 @@ async def writer_task(sess: CallSession) -> None:
             pass
         if sess.closed:
             return
-        if frame_body is None and sess.state is CallState.ARMED and ATTRACT_FRAMES:
-            frame_body = ATTRACT_FRAMES[sess.attract_idx % len(ATTRACT_FRAMES)]
-            sess.attract_idx += 1
-            # While the menu is actually speaking (non-silent frame), hold off the wake listener so
-            # its sidetone isn't transcribed. The silence-pad frames between repeats leave it open.
-            if frame_body != _ATTRACT_SILENCE:
-                sess.attract_speaking_until = time.monotonic() + 0.3
+        if frame_body is None:
+            frame_body = sess.next_idle_frame()      # menu loop if seized + idle, else dead silence
         if frame_body is None:
             sess.writer.write(SILENCE_FRAME)
             sess.echo_ring.append(False)
@@ -1994,7 +2018,7 @@ async def idle_listener_task(sess: CallSession) -> None:
     while True:
         await sess.idle_utt_evt.wait()
         sess.idle_utt_evt.clear()
-        if sess.state is not CallState.ARMED:
+        if sess.state is not CallState.ARMED or not sess.seized:
             continue
         utt = sess.idle_utterance
         try:
@@ -2013,8 +2037,9 @@ async def idle_listener_task(sess: CallSession) -> None:
 
 
 async def brain_task(sess: CallSession) -> None:
-    """ARMED until the first whistle; every later whistle is a barge-in that restarts the session.
-    On a callback the daemon placed, WOPR greets immediately without waiting for a whistle."""
+    """The line is dead until 2600 Hz seizes the trunk: then a wink and the menu (ARMED). A wake
+    phrase launches a game; a whistle at any time barges in and drops back to the menu. On a
+    callback the daemon placed, WOPR greets immediately (no gate)."""
     if sess.is_callback:
         sess.log.info(kv(event="callback_answered"))
         sess.detected_evt.set()
@@ -2025,11 +2050,21 @@ async def brain_task(sess: CallSession) -> None:
         dropped = sess.drain()
         if sess.state is not CallState.ARMED:
             sess.history.clear()
+            sess.experience = GREETER_EXPERIENCE if sess.whistle_pending else sess.experience
             sess.quest = QuestState(quest=sess.experience.quest)
             sess.in_chess = False
             sess.chess_idx = 0
             sess.chess_offered = False
             sess.log.info(kv(event="bargein", dropped_frames=dropped, gen=sess.playback_gen))
+        if sess.whistle_pending:
+            # The whistle: wink ("trunk seized"), then the menu loop takes over in ARMED. Earned flags
+            # persist for the call; a game in progress was abandoned by the barge-in above.
+            sess.whistle_pending = False
+            sess.experience = GREETER_EXPERIENCE
+            sess.set_state(CallState.SPEAKING)
+            await sess.play(wink_frames(), "seize_wink")
+            sess.set_state(CallState.ARMED)
+            continue
         conv = asyncio.create_task(conversation(sess), name=f"conv-{sess.call_hex}-{sess.playback_gen}")
         waiter = asyncio.create_task(sess.detected_evt.wait(), name=f"bargewait-{sess.call_hex}")
         try:
@@ -2135,6 +2170,19 @@ async def _do_callback(cfg: Config, dial: str, after_call: str, kind: str) -> No
         log.warning(kv(event="callback_failed", err=f"{type(e).__name__}: {e}"[:120]))
 
 
+async def seize_watchdog(sess: CallSession) -> None:
+    """Hang up a line nobody whistled on. Off when the gate is off, the line is already seized, or
+    the timeout is 0. Ends the call through the normal teardown (recorded as reason=no_seize)."""
+    if sess.seized or sess.cfg.seize_timeout <= 0:
+        return
+    await asyncio.sleep(sess.cfg.seize_timeout)
+    if sess.seized:
+        return
+    sess.log.info(kv(event="seize_timeout", after_s=sess.cfg.seize_timeout))
+    await end_call(sess)
+    raise CallEnded("no_seize")
+
+
 async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, cfg: Config) -> None:
     peer = writer.get_extra_info("peername")
     log = get_logger("-")
@@ -2158,6 +2206,7 @@ async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             tg.create_task(writer_task(sess), name=f"writer-{sess.call_hex}")
             tg.create_task(brain_task(sess), name=f"brain-{sess.call_hex}")
             tg.create_task(idle_listener_task(sess), name=f"idle-{sess.call_hex}")
+            tg.create_task(seize_watchdog(sess), name=f"seize-{sess.call_hex}")
     except* CallEnded as eg:
         reason = str(eg.exceptions[0])
     except* Exception as eg:  # noqa: BLE001
@@ -2261,6 +2310,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-callback", action="store_true", default=env.get("WOPR_NO_CALLBACK", "") in ("1", "true", "yes"), help="disable the thermonuclear-war hangup callback")
     p.add_argument("--no-chess", action="store_true", default=env.get("WOPR_NO_CHESS", "") in ("1", "true", "yes"), help="disable the post-flag move-by-move chess game")
     p.add_argument("--no-wake", action="store_true", default=env.get("WOPR_NO_WAKE", "") in ("1", "true", "yes"), help="disable listening for character wake phrases during the attract loop")
+    p.add_argument("--no-seize", action="store_true", default=env.get("WOPR_NO_SEIZE", "") in ("1", "true", "yes"), help="disable the 2600 Hz gate: play the menu on pickup instead of a dead line")
+    p.add_argument("--seize-timeout", type=float, default=float(env.get("WOPR_SEIZE_TIMEOUT", "90")), help="seconds to hold a dead (un-whistled) line before hanging up; 0 = never")
     p.add_argument("--wake-prompt", default=env.get("WOPR_WAKE_PROMPT", WAKE_PROMPT_DEFAULT), help="Whisper initial_prompt biasing the idle wake-phrase transcription")
     p.add_argument("--chess-moves", default=env.get("WOPR_CHESS", CHESS_MOVES_DEFAULT), help="SAN move list WOPR narrates one ply at a time (default: the Opera Game)")
     p.add_argument("--chess-offer", default=env.get("WOPR_CHESS_OFFER", CHESS_OFFER_DEFAULT), help="line WOPR speaks after the flag to offer a game of chess")
@@ -2282,6 +2333,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
+                 enable_seize=not a.no_seize, seize_timeout=a.seize_timeout,
                  menu_audio=a.menu_audio, menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms,
                  operator_audio=a.operator_audio, operator_hints=a.operator_hints,
                  goodbye_audio=a.goodbye_audio, goodbye_text=a.goodbye_text,

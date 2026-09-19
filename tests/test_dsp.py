@@ -1069,3 +1069,119 @@ class AnalyzeReportTests(unittest.TestCase):
         # columns: ... wins compl clips  (last three numbers)
         self.assertEqual(wopr_cols[-3:], ["1", "0", "0"])
         self.assertEqual(glados_cols[-3:], ["0", "1", "1"])
+
+
+class TrunkSeizeTests(unittest.TestCase):
+    """The gate: a picked-up line is dead until 2600 Hz seizes the trunk; every whistle drops the
+    caller at the menu; an un-whistled line is hung up after a timeout."""
+
+    def _sess(self, cfg=None, writes=None, uuid=b"\xaa" * 16):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b):
+                if writes is not None:
+                    writes.append(b)
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(uuid, None, _W(), cfg or w.Config())
+
+    def _whistle(self, sess, n=None):
+        for i in range(n or w.HOLD_WINDOWS):
+            sess.process_inbound_window(tone(2600, phase=i))
+
+    def test_line_starts_dead_and_the_whistle_seizes_it(self):
+        import asyncio
+
+        async def scenario():
+            sess = self._sess()
+            self.assertFalse(sess.seized)
+            self.assertIsNone(sess.next_idle_frame(), "dead line: no menu before the whistle")
+            self._whistle(sess)
+            self.assertTrue(sess.seized)
+            self.assertTrue(sess.whistle_pending)
+            self.assertTrue(sess.detected_evt.is_set())
+            self.assertEqual(sess.experience.key, "greeter", "the whistle no longer summons WOPR")
+            self.assertIsNotNone(sess.t_first_detect_ms)
+            self.assertTrue(sess.metrics("eof")["seized"])
+
+        asyncio.run(scenario())
+
+    def test_menu_plays_only_once_seized_and_idle(self):
+        import asyncio
+
+        async def scenario():
+            saved = w.ATTRACT_FRAMES
+            w.ATTRACT_FRAMES = [b"\x01" * w.FRAME_BYTES, w._ATTRACT_SILENCE]
+            try:
+                sess = self._sess()
+                self.assertIsNone(sess.next_idle_frame())
+                sess.seized = True
+                self.assertEqual(sess.next_idle_frame(), b"\x01" * w.FRAME_BYTES)
+                sess.set_state(w.CallState.SPEAKING)
+                self.assertIsNone(sess.next_idle_frame(), "not idle: no menu")
+            finally:
+                w.ATTRACT_FRAMES = saved
+
+        asyncio.run(scenario())
+
+    def test_wake_phrases_are_ignored_before_the_seize(self):
+        import asyncio
+
+        async def scenario():
+            rng = np.random.default_rng(7)
+            quiet = lambda: (rng.standard_normal(80) * 20).astype("<i2")  # noqa: E731
+            loud = lambda: (rng.standard_normal(80) * 3000).astype("<i2")  # noqa: E731
+
+            def speak(sess):
+                for _ in range(30):
+                    sess.process_inbound_window(quiet())
+                for _ in range(60):
+                    sess.process_inbound_window(loud())
+                for _ in range(120):
+                    sess.process_inbound_window(quiet())
+            dead = self._sess()
+            speak(dead)
+            self.assertFalse(dead.idle_utt_evt.is_set(), "dead line: the wake listener must not hear")
+            live = self._sess()
+            live.seized = True
+            speak(live)
+            self.assertTrue(live.idle_utt_evt.is_set(), "seized: the wake listener hears")
+
+        asyncio.run(scenario())
+
+    def test_gate_can_be_disabled_and_callbacks_skip_it(self):
+        import asyncio
+
+        async def scenario():
+            self.assertTrue(self._sess(w.Config(enable_seize=False)).seized)
+            self.assertTrue(self._sess(uuid=w.CALLBACK_UUID).seized)
+            self.assertTrue(w.parse_args([]).enable_seize)
+            self.assertFalse(w.parse_args(["--no-seize"]).enable_seize)
+            self.assertEqual(w.parse_args([]).seize_timeout, 90.0)
+            self.assertEqual(w.parse_args(["--seize-timeout", "0"]).seize_timeout, 0.0)
+
+        asyncio.run(scenario())
+
+    def test_watchdog_hangs_up_an_unwhistled_line(self):
+        import asyncio
+
+        async def scenario():
+            writes = []
+            sess = self._sess(w.Config(seize_timeout=0.01), writes)
+            with self.assertRaises(w.CallEnded) as cm:
+                await w.seize_watchdog(sess)
+            self.assertEqual(str(cm.exception), "no_seize")
+            self.assertIn(w.encode_frame(w.FrameType.TERMINATE), writes)
+            # a seized line is left alone
+            sess2 = self._sess(w.Config(seize_timeout=0.01))
+            sess2.seized = True
+            await w.seize_watchdog(sess2)           # returns, no raise
+            # timeout 0 = never
+            await w.seize_watchdog(self._sess(w.Config(seize_timeout=0)))
+
+        asyncio.run(scenario())
+
+    def test_operator_hints_no_longer_route_the_whistle_to_wopr(self):
+        self.assertNotIn("WHISTLE TWENTY SIX HUNDRED HERTZ, OR SAY JOSHUA", w.OPERATOR_HINTS_DEFAULT)
+        self.assertIn("JOSHUA", w.OPERATOR_HINTS_DEFAULT)
+        self.assertIn("WHISTLE AGAIN", w.OPERATOR_HINTS_DEFAULT)
