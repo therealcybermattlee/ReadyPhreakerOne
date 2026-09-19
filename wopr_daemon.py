@@ -1380,6 +1380,23 @@ class Config:
 _WINK_FRAMES: list[bytes] | None = None
 
 
+def clip_for(*keys: str) -> "list[bytes] | None":
+    """First loaded clip among the given keys (from the clips dir), or None. Lets audio be dropped in
+    by filename convention without any code change: e.g. clip_for("robocop-fanfare", "fanfare")."""
+    for k in keys:
+        if k and CLIP_FRAMES.get(k):
+            return CLIP_FRAMES[k]
+    return None
+
+
+def sit_frames() -> list[bytes]:
+    """The Special Information Tones (the 'number you have dialed' intercept): three rising tones,
+    913.8 / 1370.6 / 1776.7 Hz, ~330 ms each. Played before the error line — the phreaker's error."""
+    pcm = np.concatenate([synth_tone(hz, 330, 0.3) for hz in (913.8, 1370.6, 1776.7)]
+                         + [np.zeros(int(SAMPLE_RATE * 0.15), dtype="<i2")])
+    return frames_from_pcm(pcm)
+
+
 def wink_frames() -> list[bytes]:
     global _WINK_FRAMES
     if _WINK_FRAMES is None:
@@ -1772,6 +1789,9 @@ async def run_cutscene(sess: CallSession) -> None:
                                                  pitch=sess.experience.pitch), "cutscene_msg")
             except PipelineError as e:
                 sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:120]))
+    outro = clip_for(f"{sess.experience.key}-outro")     # optional <key>-outro.wav, no declaration needed
+    if outro:
+        await sess.play(outro, f"outro:{sess.experience.key}")
     if cs.goodbye:
         gframes = GOODBYE_FRAMES
         if gframes is None:
@@ -1866,7 +1886,8 @@ async def conversation(sess: CallSession) -> None:
                 # Arcade mode: bail out of this game and drop back to the menu to try another.
                 sess.log.info(kv(event="menu_return", key=sess.experience.key, text=text))
                 try:
-                    await sess.play(await tts_frames("RETURNING TO THE MAIN MENU.", sess.log),
+                    await sess.play(clip_for("menu-return")
+                                    or await tts_frames("RETURNING TO THE MAIN MENU.", sess.log),
                                     "menu_return")
                 except PipelineError:
                     pass
@@ -1934,9 +1955,14 @@ async def conversation(sess: CallSession) -> None:
                         frames = await tts_frames(reveal, sess.log, voice=voice, speed=speed, pitch=pitch)
                         sess.set_state(CallState.SPEAKING)
                         if quest.fanfare:
-                            await sess.play(wink_frames(), "flag_fanfare")
-                        reveal_intro = (INTRO_FRAMES.get(quest.reveal_intro) if quest.reveal_intro
-                                        else FLAG_INTRO_FRAMES if is_wopr else None)
+                            # <key>-fanfare.wav, else fanfare.wav (shared), else the synthesized wink
+                            await sess.play(clip_for(f"{sess.experience.key}-fanfare", "fanfare")
+                                            or wink_frames(), "flag_fanfare")
+                        # a sampled line before the reveal: Quest.reveal_intro, else <key>-reveal.wav,
+                        # else WOPR's --flag-intro
+                        reveal_intro = (clip_for(quest.reveal_intro, f"{sess.experience.key}-reveal")
+                                        or INTRO_FRAMES.get(quest.reveal_intro or "")
+                                        or (FLAG_INTRO_FRAMES if is_wopr else None))
                         if reveal_intro:
                             await sess.play(reveal_intro, "flag_intro")
                         await sess.play(frames, "flag")
@@ -1963,19 +1989,24 @@ async def conversation(sess: CallSession) -> None:
                     # A newly-hit objective with a canned response: instant in-character feedback, no
                     # LLM round trip (the generic form of WOPR's Joshua line).
                     obj = next((o for o in quest.objectives if o.name == beat), None)
-                    if obj is not None and obj.response:
+                    hit_clip = clip_for(f"{sess.experience.key}-{beat}") if obj is not None else None
+                    if obj is not None and (obj.response or hit_clip):
+                        line = obj.response or f"[{obj.label or beat}]"
                         sess.history.append({"role": "user", "content": text})
-                        sess.history.append({"role": "assistant", "content": obj.response})
+                        sess.history.append({"role": "assistant", "content": line})
                         del sess.history[:-HISTORY_MAX_TURNS]
-                        sess.record_turn(text, obj.response, "objective")
-                        try:
-                            sess.set_state(CallState.SPEAKING)
-                            await sess.play(await tts_frames(obj.response, sess.log,
-                                                             voice=sess.experience.voice,
-                                                             speed=sess.experience.speed,
-                                                             pitch=sess.experience.pitch), "objective")
-                        except PipelineError as e:
-                            sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                        sess.record_turn(text, line, "objective")
+                        sess.set_state(CallState.SPEAKING)
+                        if hit_clip:
+                            await sess.play(hit_clip, f"objective_clip:{beat}")
+                        if obj.response:
+                            try:
+                                await sess.play(await tts_frames(obj.response, sess.log,
+                                                                 voice=sess.experience.voice,
+                                                                 speed=sess.experience.speed,
+                                                                 pitch=sess.experience.pitch), "objective")
+                            except PipelineError as e:
+                                sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                         continue
             if cfg.stub_llm:
                 reply = stub_reply()
@@ -1997,8 +2028,9 @@ async def conversation(sess: CallSession) -> None:
         except PipelineError as e:
             sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
             if e.stage != "tts":
+                frames = sit_frames()                   # the intercept tones: a phreaker's error
                 try:
-                    frames = await tts_frames(ERROR_LINE, sess.log)
+                    frames = frames + await tts_frames(ERROR_LINE, sess.log)
                 except PipelineError as e2:
                     sess.log.warning(kv(event="pipeline_error", stage=e2.stage, err=e2.err[:200]))
         if frames:
@@ -2062,7 +2094,7 @@ async def brain_task(sess: CallSession) -> None:
             sess.whistle_pending = False
             sess.experience = GREETER_EXPERIENCE
             sess.set_state(CallState.SPEAKING)
-            await sess.play(wink_frames(), "seize_wink")
+            await sess.play(clip_for("seize") or wink_frames(), "seize_wink")   # trunk seized
             sess.set_state(CallState.ARMED)
             continue
         conv = asyncio.create_task(conversation(sess), name=f"conv-{sess.call_hex}-{sess.playback_gen}")

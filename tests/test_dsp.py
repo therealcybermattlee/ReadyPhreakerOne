@@ -1032,6 +1032,16 @@ class PeeweeCutsceneTests(unittest.TestCase):
                 w.CLIP_FRAMES.update(saved)
             self.assertEqual(played, ["cutscene:tequila"])                # missing scream skipped, not fatal
             self.assertTrue(sess.games["peewee"]["completed"])
+            # an optional <key>-outro.wav plays after the clips, by filename convention alone
+            played.clear()
+            try:
+                w.CLIP_FRAMES["peewee-outro"] = [b"\x00" * w.FRAME_BYTES]
+                w.CLIP_FRAMES["tequila"] = [b"\x00" * w.FRAME_BYTES]
+                await w.run_cutscene(sess)
+            finally:
+                w.CLIP_FRAMES.clear()
+                w.CLIP_FRAMES.update(saved)
+            self.assertEqual(played, ["cutscene:tequila", "outro:peewee"])
 
         asyncio.run(scenario())
 
@@ -1185,3 +1195,30 @@ class TrunkSeizeTests(unittest.TestCase):
         self.assertNotIn("WHISTLE TWENTY SIX HUNDRED HERTZ, OR SAY JOSHUA", w.OPERATOR_HINTS_DEFAULT)
         self.assertIn("JOSHUA", w.OPERATOR_HINTS_DEFAULT)
         self.assertIn("WHISTLE AGAIN", w.OPERATOR_HINTS_DEFAULT)
+
+
+class ClipConventionTests(unittest.TestCase):
+    """Audio drops in by filename: clip_for() resolves the first loaded key; SIT tones synthesize."""
+
+    def test_clip_for_prefers_specific_then_shared_then_none(self):
+        saved = dict(w.CLIP_FRAMES)
+        try:
+            w.CLIP_FRAMES.clear()
+            self.assertIsNone(w.clip_for("robocop-fanfare", "fanfare"))
+            w.CLIP_FRAMES["fanfare"] = [b"\x01" * w.FRAME_BYTES]
+            self.assertEqual(w.clip_for("robocop-fanfare", "fanfare"), w.CLIP_FRAMES["fanfare"])
+            w.CLIP_FRAMES["robocop-fanfare"] = [b"\x02" * w.FRAME_BYTES]
+            self.assertEqual(w.clip_for("robocop-fanfare", "fanfare"), w.CLIP_FRAMES["robocop-fanfare"])
+            self.assertIsNone(w.clip_for("", "nope"))     # empty keys are skipped
+        finally:
+            w.CLIP_FRAMES.clear()
+            w.CLIP_FRAMES.update(saved)
+
+    def test_sit_tones_are_three_rising_tones(self):
+        frames = w.sit_frames()
+        self.assertTrue(all(len(f) == w.FRAME_BYTES for f in frames))
+        self.assertGreater(len(frames) * 20, 3 * 330)          # >= ~1 s
+        pcm = np.frombuffer(b"".join(frames), dtype="<i2")
+        seg = len(pcm) // 4
+        hz = [w.estimate_peak_hz(pcm[i * seg:(i + 1) * seg], lo=800.0, hi=2000.0) for i in range(3)]
+        self.assertTrue(hz[0] < hz[1] < hz[2], hz)
