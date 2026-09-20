@@ -1592,6 +1592,8 @@ class FifthFlagTests(unittest.TestCase):
                 s.note_game(k, won=True)
             self.assertTrue(w.flag_tally(s).startswith("3 OF 4 FLAGS"))
             self.assertIn("3 OF 4", w.flag_report(s)); self.assertNotIn("TEST MASTER", w.flag_report(s))
+            self.assertIn("ROBOCOP: DIRECTIVE FOUR CLASSIFIED", w.flag_report(s))
+            self.assertIn("WOPR: JOSHUA FIVE BY FIVE", w.flag_report(s))
             s.note_game("et", won=True)
             t = w.flag_tally(s)
             self.assertTrue(t.startswith("ALL 4 FLAGS")); self.assertEqual(t.count("TEST MASTER"), 2)
@@ -1604,4 +1606,19 @@ class FifthFlagTests(unittest.TestCase):
             self.assertFalse(s.joshua_said)
 
         asyncio.run(scenario())
+
+
+class CeremonyTests(unittest.TestCase):
+    def test_chess_needs_a_clear_yes_but_advances_on_nudges(self):
+        for t in ["the only game is to not play", "let me hear you", "the johnny 5x5 sound", "no, I said your flag"]:
+            self.assertIsNone(w.CHESS_ENTER_RE.search(t), t)
+        for t in ["yes", "sure, chess", "okay", "let's play"]:
+            self.assertTrue(w.CHESS_ENTER_RE.search(t), t)
+        self.assertTrue(w.CHESS_YES_RE.search("next"))
+
+    def test_flag_repeat_requests(self):
+        for t in ["what was your flag?", "say the flag again", "repeat my flag", "tell me the flag"]:
+            self.assertTrue(w.FLAG_REPEAT_RE.search(t), t)
+        for t in ["global thermonuclear war", "the only winning move is not to play"]:
+            self.assertIsNone(w.FLAG_REPEAT_RE.search(t), t)
 

@@ -913,14 +913,21 @@ def flag_tally(sess) -> str:
 
 
 def flag_report(sess) -> str:
-    """The Operator's answer to 'how many flags do I have?' (deterministic, from the call record)."""
+    """The Operator's answer to 'how many flags do I have?' (deterministic, from the call record):
+    the count, each held flag by name, and the fifth flag once all are held."""
     won, n = flags_won(sess)
     if won == 0:
         return f"YOU HOLD NO FLAGS YET. THERE ARE {n} TO WIN, AND ONE MORE FOR WINNING THEM ALL."
+    held = []
+    for e in WAKE_EXPERIENCES:
+        if e.quest and sess.games.get(e.key, {}).get("won"):
+            name = e.directory.name if e.directory else e.key.upper()
+            held.append(f"{name}: {e.quest.flag or sess.cfg.flag}")
+    lines = ". ".join(held)
     if won >= n:
         m = sess.cfg.master_flag
-        return f"YOU HOLD ALL {n} FLAGS. YOUR FINAL FLAG IS {m}. AGAIN. {m}."
-    return f"YOU HOLD {won} OF {n} FLAGS. {n - won} TO GO."
+        return f"YOU HOLD ALL {n} FLAGS. {lines}. YOUR FINAL FLAG IS {m}. AGAIN. {m}."
+    return f"YOU HOLD {won} OF {n} FLAGS. {lines}. {n - won} TO GO."
 
 
 def validate_games(log) -> int:
@@ -998,6 +1005,7 @@ OPERATOR_REPLY_BUDGET_S = 6.0             # slower than this and she speaks the 
 OPERATOR_NUM_PREDICT = 56                 # ~2 sentences; a reply cut by the limit loses its trailing fragment
 OPERATOR_NUDGE_S = 12.0                   # caller silence before a nudge
 SECRET_WORD_ASK_RE = re.compile(r"\b(secret\s+word|password|pass\s?phrase|the\s+word|a\s+clue|hint)\b", re.I)
+FLAG_REPEAT_RE = re.compile(r"\b((what|say|repeat|tell me|read)\b.{0,25}\bflag|flag again|my flag|the flag\b)", re.I)
 FLAG_COUNT_RE = re.compile(r"\b(how many flags|my flags|flags (do|did) i|flag count|my score|what.s my score|"
                            r"how am i doing|how many (have|did) i)\b", re.I)
 LIST_OPTIONS_RE = re.compile(r"\b(list|options|what can i (say|do)|who (is|else is) (on|here)|choices|menu of)\b", re.I)
@@ -1176,6 +1184,9 @@ CHESS_STOP_LINE_DEFAULT = "GAME ADJOURNED, PROFESSOR FALKEN. THE ONLY WINNING MO
 
 # Enter chess mode (once offered) or start it outright; advance a move; or quit.
 CHESS_WORD_RE = re.compile(r"\bchess\b", re.I)
+# Accepting the offer needs a clear yes (a caller saying 'the only game is not to play' after the flag
+# must not start a match); once in a game, any nudge word advances a move.
+CHESS_ENTER_RE = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|okey|play chess|let'?s play|chess)\b", re.I)
 CHESS_YES_RE = re.compile(r"\b(next|go|going|continue|move|yes|yeah|yep|sure|ok|okay|okey|"
                           r"please|proceed|another|more|again|play|do it|on)\b", re.I)
 CHESS_STOP_RE = re.compile(r"\b(stop|no|nope|quit|done|enough|resign|cancel|exit|finish|"
@@ -2400,7 +2411,7 @@ async def conversation(sess: CallSession) -> None:
                 continue
             if is_wopr and cfg.enable_chess and (sess.chess_offered or CHESS_WORD_RE.search(text)):
                 declines = CHESS_STOP_RE.search(text) and not CHESS_WORD_RE.search(text)
-                wants = CHESS_YES_RE.search(text) or CHESS_WORD_RE.search(text)
+                wants = CHESS_ENTER_RE.search(text) or CHESS_WORD_RE.search(text)
                 if wants and not declines:
                     sess.chess_offered = False
                     sess.in_chess = True
@@ -2438,6 +2449,7 @@ async def conversation(sess: CallSession) -> None:
                     sess.history.append({"role": "assistant", "content": reveal})
                     del sess.history[:-HISTORY_MAX_TURNS]
                     sess.record_turn(text, reveal, "flag")
+                    sess.no_barge = True          # the payoff plays through: nobody talks over the flag
                     try:
                         voice = quest.reveal_voice or (cfg.flag_voice if is_wopr else sess.experience.voice)
                         speed = quest.reveal_speed or (cfg.flag_speed if is_wopr else sess.experience.speed)
@@ -2459,10 +2471,12 @@ async def conversation(sess: CallSession) -> None:
                         await sess.play(await tts_frames(flag_tally(sess), sess.log), "flag_tally")
                         if is_wopr and cfg.enable_chess:
                             # WOPR's post-mortem, straight from the film: offer a nice game of chess.
-                            sess.chess_offered = True
                             await sess.play(await tts_frames(cfg.chess_offer, sess.log), "chess_offer")
+                            sess.chess_offered = True     # only once the offer was actually heard
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                    finally:
+                        sess.no_barge = False
                     continue
                 if is_wopr and not sess.joshua_said and MOVIE_BEATS["joshua"].search(text):
                     sess.joshua_said = True       # the Falken recognition line, once per call
@@ -2533,6 +2547,21 @@ async def conversation(sess: CallSession) -> None:
                     await sess.play(war_clip, "war_turn")
                     if sess.interrupted:
                         continue
+            if quest is not None and sess.quest.unlocked and FLAG_REPEAT_RE.search(text):
+                # A won character repeats its flag on request (the ceremony may have been missed).
+                flag = quest.flag or cfg.flag
+                line = f"YOUR FLAG IS {flag}. AGAIN. {flag}."
+                sess.record_turn(text, line, "flag_repeat")
+                sess.no_barge = True
+                try:
+                    sess.set_state(CallState.SPEAKING)
+                    await sess.play(await tts_frames(line, sess.log, voice=sess.experience.voice,
+                                                     speed=sess.experience.speed, pitch=sess.experience.pitch), "flag_repeat")
+                except PipelineError as e:
+                    sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                finally:
+                    sess.no_barge = False
+                continue
             if quest is not None and quest.help_re is not None and quest.help_text and quest.help_re.search(text):
                 # The caller asked what to do: a fixed in-character answer, never the model.
                 sess.history.append({"role": "user", "content": text})
