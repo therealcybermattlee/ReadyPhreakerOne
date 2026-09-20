@@ -612,8 +612,11 @@ class WakeExperienceTests(unittest.TestCase):
 
     def test_menu_greeting_words_do_not_self_trigger_the_greeter(self):
         # the menu greeting bleeds into the mouthpiece; none of its words may summon the operator
-        for t in ["how may i help you", "hello hacker", "welcome to grrcon", "i need help"]:
+        for t in ["how may i help you", "hello hacker", "i need help"]:
             self.assertIsNone(w.match_experience(t), f"{t!r} must NOT match (menu sidetone)")
+        # "welcome to GrrCon" DOES match on purpose: GrrCon is Pee-wee's secret word. The sidetone
+        # guard (idle VAD paused while the menu speaks) is what stops the menu from triggering it.
+        self.assertEqual(w.match_experience("welcome to grrcon").key, "peewee")
 
 
 class GameStatsTests(unittest.TestCase):
@@ -992,10 +995,15 @@ class PeeweeCutsceneTests(unittest.TestCase):
     """'Secret word' -> the Pee-wee scream clip -> Tequila -> back to the menu (a two-clip cutscene)."""
 
     def test_secret_word_summons_peewee(self):
-        for t in ["what's the secret word", "pee-wee", "peewee herman", "mecca lecca hi"]:
+        for t in ["grrcon", "GrrCon!", "grr con", "gercon", "girl con", "grr khan", "gurcon",
+                  "grrr con", "welcome to grrcon"]:
             exp = w.match_experience(t)
             self.assertIsNotNone(exp, t)
             self.assertEqual(exp.key, "peewee", t)
+        # the old wake words are gone: "secret word" is the hint, not the trigger
+        for t in ["what's the secret word", "pee-wee", "mecca lecca hi", "grand canyon", "green"]:
+            m = w.match_experience(t)
+            self.assertTrue(m is None or m.key != "peewee", f"{t!r} must not summon peewee")
 
     def test_peewee_is_a_two_clip_cutscene_that_returns_to_the_menu(self):
         exp = {e.key: e for e in w.WAKE_EXPERIENCES}["peewee"]

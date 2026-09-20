@@ -584,7 +584,7 @@ MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
 # STT bias so the wake phrases transcribe reliably from idle speech.
 WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
                        "Elliott. E.T. Phone home. Kickflip. Tony Hawk. Patrick Garrity. "
-                       "The cake is a lie. Shall we play a game.")
+                       "The cake is a lie. GrrCon. Shall we play a game.")
 
 
 # --- Game framework (spec 002) -------------------------------------------------------------------
@@ -748,11 +748,15 @@ TONYHAWK_EXPERIENCE = Experience(
                        "and tell them they can shred like Patrick Garrity.",
         message_text="YOU CAN TOTALLY LAND THAT KICKFLIP. COMMIT, POP, FLICK, AND SEND IT. "
                      "YOU COULD SHRED JUST LIKE PATRICK GARRITY."))   # -> back to the menu (arcade)
-# Pee-wee (cutscene): say the secret word -> everybody screams -> then "Tequila" -> back to the menu.
-# Clips are plain WAVs in the intro dir: peewee-secret-word.wav and tequila.wav (see CLIP_FRAMES).
+# Pee-wee (cutscene): the secret word is the con's own name. Say "GrrCon" (growl it like a bear) ->
+# everybody screams -> then "Tequila" -> back to the menu. The operator hints only say "say the
+# secret word"; figuring out that it is GrrCon is the puzzle. The menu greeting also says GrrCon —
+# the sidetone guard (wake listening is paused while the menu speaks) is what keeps it from
+# self-triggering. Matcher accepts STT mishears: "grr con", "gercon", "girl con", "grr khan".
 PEEWEE_EXPERIENCE = Experience(
     "peewee",
-    wake=re.compile(r"\bsecret\s+word\b|\bpee\s?-?wee\b|\bmecca\s+lecca\b", re.I),
+    wake=re.compile(r"\b(g[eiu]?r+|grr+|girl|gur|ger|gr)[\s-]*(con|conn|kon|khan|kahn|gone|kong)\b"
+                    r"|\bg[eiu]?r+con\b", re.I),
     cutscene=Cutscene(clips=("peewee-secret-word", "tequila"), message_mode="none"))
 # The greeter: default host. "operator" plays the hints clip, then returns to the menu.
 # NB: keep these wake words OUT of the menu greeting text — the menu bleeds into the mouthpiece as
