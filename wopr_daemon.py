@@ -605,7 +605,7 @@ MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
 # STT bias so the wake phrases transcribe reliably from idle speech.
 WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
                        "Elliott. E.T. Phone home. Kickflip. Tony Hawk. Patrick Garrity. "
-                       "The cake is a lie. GrrCon. Shall we play a game.")
+                       "The cake is a lie. GrrCon. HAL 9000. Open the pod bay doors. Shall we play a game.")
 
 
 # --- Game framework (spec 002) -------------------------------------------------------------------
@@ -779,6 +779,13 @@ PEEWEE_EXPERIENCE = Experience(
     wake=re.compile(r"\b(g[eiu]?r+|grr+|girl|gur|ger|gr)[\s-]*(con|conn|kon|khan|kahn|gone|kong)\b"
                     r"|\bg[eiu]?r+con\b", re.I),
     cutscene=Cutscene(clips=("peewee-secret-word", "tequila"), message_mode="none"))
+# HAL 9000 (cutscene): "HAL" / "open the pod bay doors" -> hal-intro.wav ("Good evening, Dave") ->
+# hal-disconnect.wav ("I know that you and Frank were planning to disconnect me…") -> hal-outro.wav
+# ("This conversation can serve no purpose anymore. Goodbye.") -> back to the menu.
+HAL_EXPERIENCE = Experience(
+    "hal",
+    wake=re.compile(r"\bhal\b|\bhal\s?9000\b|\bhow\s?9000\b|\bpod\s+bay\b|\bdaisy,?\s+daisy\b", re.I),
+    cutscene=Cutscene(clip="hal-disconnect", message_mode="none"))
 # The greeter: default host. "operator" plays the hints clip, then returns to the menu.
 # NB: keep these wake words OUT of the menu greeting text — the menu bleeds into the mouthpiece as
 # sidetone, and any menu word here would self-trigger the operator. ("help" was removed for exactly
@@ -795,7 +802,7 @@ GOODBYE_EXPERIENCE = Experience(
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
 WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_EXPERIENCE,
-                    TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, PEEWEE_EXPERIENCE,
+                    TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, PEEWEE_EXPERIENCE, HAL_EXPERIENCE,
                     GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
 
 

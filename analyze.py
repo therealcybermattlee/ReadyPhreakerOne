@@ -33,7 +33,7 @@ BEAT_LABEL = {"joshua": "Said “Joshua”", "play_game": "Asked to play a game"
 # The playable games (matches the daemon's roster) and their display names.
 GAME_LABEL = {"wopr": "WOPR (WarGames)", "skynet": "Skynet / T-800", "robocop": "RoboCop",
               "et": "E.T.", "tonyhawk": "Tony Hawk", "glados": "GLaDOS (song)",
-              "peewee": "Pee-wee (Tequila)"}
+              "peewee": "Pee-wee (Tequila)", "hal": "HAL 9000"}
 
 STOPWORDS = set(("a an and the to of is it i you we they he she that this these those for on in at "
                  "with as be are was were do does did have has had will would can could should i'm "

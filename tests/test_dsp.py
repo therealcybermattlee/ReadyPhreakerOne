@@ -564,7 +564,7 @@ class WakeExperienceTests(unittest.TestCase):
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
         self.assertEqual(keys, ["wopr", "skynet", "robocop", "et", "tonyhawk",
-                                "glados", "peewee", "greeter", "goodbye"])
+                                "glados", "peewee", "hal", "greeter", "goodbye"])
         convo = [e for e in w.WAKE_EXPERIENCES if e.archetype in ("chat", "quest")]  # WOPR + chats
         prompts = {e.system_prompt for e in convo}
         self.assertEqual(len(prompts), 4, "wopr/skynet/robocop/et each have their own system prompt")
@@ -1338,4 +1338,19 @@ class WarTurnTests(unittest.TestCase):
             self.assertEqual(w.WAR_TURN_CLIP, "wopr-war-turn")
 
         asyncio.run(scenario())
+
+
+class HalCutsceneTests(unittest.TestCase):
+    def test_hal_wake_and_shape(self):
+        for t in ["hal", "HAL 9000", "open the pod bay doors", "daisy, daisy"]:
+            self.assertEqual(w.match_experience(t).key, "hal", t)
+        for t in ["hello", "halt", "shall we play a game"]:
+            m = w.match_experience(t)
+            self.assertTrue(m is None or m.key != "hal", t)
+        exp = {e.key: e for e in w.WAKE_EXPERIENCES}["hal"]
+        self.assertEqual(exp.archetype, "cutscene")
+        self.assertEqual(exp.cutscene.clip, "hal-disconnect")
+        self.assertFalse(exp.cutscene.end_call)
+        self.assertTrue(w.is_game("hal"))
+        self.assertEqual(w.validate_games(w.get_logger("test")), 0)
 
