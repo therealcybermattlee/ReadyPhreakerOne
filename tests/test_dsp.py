@@ -997,7 +997,7 @@ class PeeweeCutsceneTests(unittest.TestCase):
 
     def test_secret_word_summons_peewee(self):
         for t in ["grrcon", "GrrCon!", "grr con", "gercon", "girl con", "grr khan", "gurcon",
-                  "grrr con", "welcome to grrcon"]:
+                  "grrr con", "welcome to grrcon", "I think I like Ghercon", "gher con"]:
             exp = w.match_experience(t)
             self.assertIsNotNone(exp, t)
             self.assertEqual(exp.key, "peewee", t)
@@ -1320,10 +1320,12 @@ class SpeechBargeInTests(unittest.TestCase):
             await sess.enqueue(frames)
             self.assertEqual(sess.outbound_q.qsize(), 200)
             sess.bargeable = True
+            sess.utterance_evt.set()                      # an unread utterance from before the switch
             rng = np.random.default_rng(13)
             for win in self._noise(rng, 3000, w.BARGE_LOUD_WINDOWS + 1):
                 sess.process_inbound_window(win)
             self.assertTrue(sess.interrupted)
+            self.assertFalse(sess.utterance_evt.is_set(), "a stale utterance must not replay after a barge-in")
             self.assertEqual(sess.outbound_q.qsize(), 0, "queued playback drained")
             self.assertIs(sess.state, w.CallState.CAPTURING)
             self.assertTrue(sess.vad.in_speech, "VAD seeded mid-utterance")

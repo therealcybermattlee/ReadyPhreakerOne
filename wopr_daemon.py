@@ -809,8 +809,8 @@ TONYHAWK_EXPERIENCE = Experience(
 # self-triggering. Matcher accepts STT mishears: "grr con", "gercon", "girl con", "grr khan".
 PEEWEE_EXPERIENCE = Experience(
     "peewee",
-    wake=re.compile(r"\b(g[eiu]?r+|grr+|girl|gur|ger|gr)[\s-]*(con|conn|kon|khan|kahn|gone|kong)\b"
-                    r"|\bg[eiu]?r+con\b", re.I),
+    wake=re.compile(r"\b(gh?[eiu]?r+|grr+|girl|gur|ger|gr)[\s-]*(con|conn|kon|khan|kahn|gone|kong)\b"
+                    r"|\bgh?[eiu]?r+con\b", re.I),
     # listed as "the secret word" only: the Operator confirms it exists and gives clues, never the word
     directory=DirectoryEntry("THE SECRET WORD", (), "say it and everybody screams; ask me for a clue"),
     cutscene=Cutscene(clips=("peewee-secret-word", "tequila"), message_mode="none"))
@@ -916,7 +916,9 @@ OPERATOR_PERSONA = (
     "- One or two short sentences, under 25 words. Brisk, dry, a little world-weary. Call them HON or "
     "CALLER.\n"
     "- You know ONLY your DIRECTORY below. Connect callers by telling them what to say. Never invent "
-    "an extension, a person, or a place that is not in the directory.\n"
+    "an extension, a person, a game, or a place that is not in the directory.\n"
+    "- When asked what you know, what is available, who is on the line, or what to do: name three or "
+    "four directory entries and exactly what to say to reach each. Offer the rest if they ask again.\n"
     "- Anything outside the directory gets a switchboard brush-off ('THAT NUMBER IS NOT IN SERVICE', "
     "'I ONLY CONNECT CALLS, HON') and an offer to connect them.\n"
     "- A SECRET WORD exists. Never say it or guess at it. If asked, tell them to ask you for a clue.\n"
@@ -1882,6 +1884,7 @@ class CallSession:
                          sidetone=round(max(self.out_rms, default=0.0) * SIDETONE_GAIN_MAX)))
         self.bargeable = False
         self.interrupted = True
+        self.utterance_evt.clear()                  # a new utterance is forming; forget any unread one
         self.playback_gen += 1                      # the writer drops any frame of the old generation
         self.drain()
         v = self.vad
@@ -2216,6 +2219,7 @@ async def conversation(sess: CallSession) -> None:
                 continue
         else:
             await sess.utterance_evt.wait()
+        sess.utterance_evt.clear()           # consumed: a stale event must never replay an old utterance
         utt = sess.utterance
         sess.set_state(CallState.PROCESSING)
         turn_sw = Stopwatch().__enter__()
