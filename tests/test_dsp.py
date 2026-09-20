@@ -1400,3 +1400,86 @@ class HalCutsceneTests(unittest.TestCase):
         self.assertTrue(w.is_game("hal"))
         self.assertEqual(w.validate_games(w.get_logger("test")), 0)
 
+
+class OperatorTests(unittest.TestCase):
+    """Spec 003: the switchboard Operator — directory, easter eggs, filter, clues, availability."""
+
+    def _sess(self, cfg=None):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b): pass
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(b"\xdd" * 16, None, _W(), cfg or w.Config())
+
+    def test_directory_lists_only_listed_games(self):
+        d = w.render_directory()
+        for name in ("WOPR", "SKYNET", "ROBOCOP", "E.T.", "TONY HAWK", "GLADOS", "THE SECRET WORD"):
+            self.assertIn(name, d)
+        self.assertNotIn("HAL", d)                    # easter egg
+        self.assertNotIn("GRRCON", d.upper())         # the secret word itself never appears
+        self.assertIn(w.render_directory(), w.OPERATOR_EXPERIENCE.system_prompt)
+        self.assertEqual(w.OPERATOR_EXPERIENCE.archetype, "chat")
+        self.assertFalse(w.is_game("operator"))
+        self.assertEqual(w.OPERATOR_EXPERIENCE.idle_nudge_s, w.OPERATOR_NUDGE_S)
+
+    def test_every_directory_say_summons_its_game_and_roster_validates(self):
+        for e in w.listed_games():
+            for s in e.directory.say:
+                self.assertEqual(w.match_experience(s).key, e.key, f"{e.key}: {s!r}")
+        self.assertEqual(w.validate_games(w.get_logger("test")), 0)
+        self.assertFalse({e.key for e in w.WAKE_EXPERIENCES if not e.listed} - {"hal", "greeter", "goodbye"})
+
+    def test_filter_strips_easter_egg_names_and_blocks_the_secret_word(self):
+        out, removed = w.operator_filter("YOU COULD TRY HAL 9000, OR ROBOCOP, HON.")
+        self.assertNotIn("HAL", out); self.assertIn("ROBOCOP", out); self.assertIn("HAL 9000", removed)
+        out, removed = w.operator_filter("THE SECRET WORD IS GRRCON, HON.")
+        self.assertEqual(out, w.OPERATOR_BRUSHOFF); self.assertIn("<secret word>", removed)
+        out, removed = w.operator_filter("GRR CON.")
+        self.assertEqual(out, w.OPERATOR_BRUSHOFF)
+        out, removed = w.operator_filter("DAVE.")
+        self.assertEqual(out, w.OPERATOR_FALLBACK)   # emptied by the filter
+        out, removed = w.operator_filter("SAY JOSHUA FOR THE WAR COMPUTER, HON.")
+        self.assertEqual(out, "SAY JOSHUA FOR THE WAR COMPUTER, HON."); self.assertEqual(removed, [])
+
+    def test_clue_and_options_intercepts(self):
+        for t in ["what's the secret word", "give me a hint", "is there a password"]:
+            self.assertTrue(w.SECRET_WORD_ASK_RE.search(t), t)
+        for t in ["list the options", "who is on the line", "what can I say"]:
+            self.assertTrue(w.LIST_OPTIONS_RE.search(t), t)
+        self.assertIsNone(w.SECRET_WORD_ASK_RE.search("connect me to robocop"))
+        self.assertGreaterEqual(len(w.OPERATOR_CLUES), 3)
+        for c in w.OPERATOR_CLUES + w.OPERATOR_NUDGES + (w.OPERATOR_FALLBACK, w.OPERATOR_BRUSHOFF):
+            self.assertIsNone(w.PEEWEE_EXPERIENCE.wake.search(c), f"content leaks the secret word: {c}")
+
+    def test_availability_and_routing(self):
+        import asyncio
+
+        async def scenario():
+            saved = w.LLM_WARM_OK
+            try:
+                w.LLM_WARM_OK = True
+                self.assertTrue(w.operator_available(w.Config()))
+                self.assertFalse(w.operator_available(w.Config(enable_operator=False)))
+                self.assertFalse(w.operator_available(w.Config(stub_llm=True)))
+                w.LLM_WARM_OK = False
+                self.assertFalse(w.operator_available(w.Config()), "no warm model: menu loop hosts")
+                w.LLM_WARM_OK = True
+                sess = self._sess()
+                sess.route_to_operator()
+                self.assertFalse(sess.detected_evt.is_set(), "not seized: nothing routes")
+                sess.seized = True
+                sess.route_to_operator()
+                self.assertIs(sess.experience, w.OPERATOR_EXPERIENCE)
+                self.assertTrue(sess.detected_evt.is_set())
+                sess2 = self._sess(); sess2.seized = True; sess2.hanging_up = True
+                sess2.route_to_operator()
+                self.assertFalse(sess2.detected_evt.is_set(), "hanging up: no operator")
+                self.assertEqual((sess.clue_idx, sess.nudge_idx, sess.greeted), (0, 0, False))
+                self.assertTrue(w.parse_args([]).enable_operator)
+                self.assertFalse(w.parse_args(["--no-operator"]).enable_operator)
+            finally:
+                w.LLM_WARM_OK = saved
+
+        asyncio.run(scenario())
+
