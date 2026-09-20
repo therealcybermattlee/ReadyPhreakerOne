@@ -89,6 +89,11 @@ BARGE_RATIO = 3.0             # … and exceed the running sidetone floor by thi
 BARGE_HOLD_WINDOWS = 30       # 300 ms of loud windows (with a miss budget) before we cut playback
 BARGE_MISS_BUDGET = 6         # quiet windows tolerated inside the run (speech has gaps)
 BARGE_MIN_FRAMES = 50         # only plays of ≥ 1 s are interruptible (winks, beeps are not)
+SIDETONE_GAIN_MAX = 0.35      # inbound must also exceed this × the loudest outbound window of the last
+                              # 400 ms. Measured 2026-09-20 on two real calls: sidetone ≈ 0.16–0.17 ×
+                              # outbound RMS (DEFCON alarm 8176 → 1356; turret intro 16749 → 2700).
+                              # 0.35 is 2× margin; a caller talking over a clip measures 2000–11000.
+SIDETONE_RING_WINDOWS = 40    # 400 ms of outbound RMS history (sidetone lags playback by ~200 ms)
 BARGE_BUFFER_WINDOWS = 60     # 600 ms of caller audio kept to seed the interrupting utterance
 
 # --- Wink tone ------------------------------------------------------------------------------
@@ -1300,12 +1305,13 @@ class BargeDetector:
     def threshold(self) -> float:
         return max(BARGE_RMS_MIN, self.floor * BARGE_RATIO)
 
-    def update(self, win: np.ndarray) -> bool:
+    def update(self, win: np.ndarray, sidetone: float = 0.0) -> bool:
+        """`sidetone` = the loudest recent outbound window's RMS; the bar rises with what is playing."""
         r = rms(win)
         self.last_rms = r
         self.buf.append(win.astype("<i2").tobytes())
         self.seen += 1
-        loud = r > self.threshold
+        loud = r > max(self.threshold, sidetone * SIDETONE_GAIN_MAX)
         if not loud:
             self.floor = r if self.seen == 1 else self.floor * 0.95 + r * 0.05
         if loud:
@@ -1502,6 +1508,7 @@ class CallSession:
         self.echo_ring: collections.deque[bool] = collections.deque(maxlen=ECHO_GUARD_WINDOWS)
         self.vad = VadState()
         self.barge = BargeDetector()            # speech-over-playback detector (see BARGE_*)
+        self.out_rms: collections.deque = collections.deque(maxlen=SIDETONE_RING_WINDOWS)  # recent outbound RMS
         self.bargeable = False                  # the current play() may be interrupted by speech
         self.no_barge = False                   # set around plays that must finish (seize, goodbye)
         self.interrupted = False                # speech barge-in happened; skip queued plays
@@ -1688,7 +1695,7 @@ class CallSession:
                 self.t_first_detect_ms = self.elapsed_ms()
             self.on_whistle()
         if self.state is CallState.SPEAKING and self.bargeable and not masked:
-            if self.barge.update(win):
+            if self.barge.update(win, max(self.out_rms, default=0.0)):
                 self.speech_bargein()
         elif self.state is CallState.CAPTURING and not masked:
             utt = self.vad.update(win)
@@ -1711,7 +1718,8 @@ class CallSession:
     def speech_bargein(self) -> None:
         """The caller talked over a clip: stop playback now, keep what they said as the utterance
         the game will process next (the VAD is seeded mid-speech), and let play() return."""
-        self.log.info(kv(event="bargein_speech", rms=round(self.barge.last_rms), floor=round(self.barge.floor)))
+        self.log.info(kv(event="bargein_speech", rms=round(self.barge.last_rms), floor=round(self.barge.floor),
+                         sidetone=round(max(self.out_rms, default=0.0) * SIDETONE_GAIN_MAX)))
         self.bargeable = False
         self.interrupted = True
         self.playback_gen += 1                      # the writer drops any frame of the old generation
@@ -1753,6 +1761,7 @@ class CallSession:
     # --- audio out -------------------------------------------------------------------------
     def note_outbound_window(self, win: np.ndarray) -> None:
         self.echo_ring.append(window_passes(win)[0])
+        self.out_rms.append(rms(win))
 
     async def enqueue(self, frames: list[bytes]) -> None:
         gen = self.playback_gen
@@ -1846,6 +1855,8 @@ async def writer_task(sess: CallSession) -> None:
             sess.writer.write(SILENCE_FRAME)
             sess.echo_ring.append(False)
             sess.echo_ring.append(False)
+            sess.out_rms.append(0.0)
+            sess.out_rms.append(0.0)
         else:
             sess.writer.write(encode_frame(FrameType.AUDIO, frame_body))
             for win in pcm_windows(frame_body):

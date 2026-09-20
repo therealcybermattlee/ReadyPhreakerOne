@@ -1257,6 +1257,18 @@ class SpeechBargeInTests(unittest.TestCase):
         fired = [det.update(win) for win in self._noise(rng, 3000, w.BARGE_HOLD_WINDOWS + 2)]
         self.assertEqual(sum(fired), 1)
 
+    def test_loud_playback_raises_the_bar(self):
+        """A hot clip's sidetone (measured ~0.17 × outbound) must not trip the detector; real speech over
+        it still does. The turret intro plays at ~16000 RMS -> sidetone ~2700, above BARGE_RMS_MIN."""
+        rng = np.random.default_rng(14)
+        det = w.BargeDetector()
+        for win in self._noise(rng, 2700, 60):                 # sidetone of a 16000-RMS clip
+            self.assertFalse(det.update(win, sidetone=16000.0))
+        fired = [det.update(win, sidetone=16000.0) for win in self._noise(rng, 8000, w.BARGE_HOLD_WINDOWS + 2)]
+        self.assertEqual(sum(fired), 1)                        # the caller shouting over it
+        det = w.BargeDetector()                                # silence out: the floor is the only bar
+        self.assertTrue(any(det.update(win, sidetone=0.0) for win in self._noise(rng, 2700, w.BARGE_HOLD_WINDOWS + 2)))
+
     def test_short_shout_does_not_fire(self):
         rng = np.random.default_rng(12)
         det = w.BargeDetector()
