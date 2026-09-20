@@ -350,29 +350,29 @@ class MovieQuestTests(unittest.TestCase):
 
     def test_unlocks_only_after_all_beats(self):
         q = self.wopr_quest()
-        self.assertEqual(q.update("Hello WOPR, is Joshua there?"), "joshua")
+        self.assertIsNone(q.update("Hello WOPR, is Joshua there?"))   # Joshua is the door, not a beat
         self.assertFalse(q.unlocked)
         self.assertEqual(q.update("Can we play a game?"), "play_game")
         self.assertEqual(q.update("Let's do global thermonuclear war."), "global_thermonuclear_war")
-        self.assertFalse(q.unlocked)                       # 3/4, still locked
+        self.assertFalse(q.unlocked)                       # 2/3, still locked
         self.assertEqual(q.update("The only winning move is not to play."), "winning_move")
-        self.assertTrue(q.unlocked)                        # 4/4
-        self.assertEqual(q.progress, "4/4")
+        self.assertTrue(q.unlocked)                        # 3/3
+        self.assertEqual(q.progress, "3/3")
 
     def test_order_independent_and_idempotent(self):
         q = self.wopr_quest()
-        for t in ["winning move", "thermonuclear", "shall we play", "joshua"]:
+        for t in ["winning move", "thermonuclear", "shall we play"]:
             q.update(t)
         self.assertTrue(q.unlocked)
         # repeating a beat doesn't report it as newly-hit
-        self.assertIsNone(q.update("joshua joshua"))
+        self.assertIsNone(q.update("shall we play again"))
 
     def test_no_false_unlock_on_normal_chat(self):
         q = self.wopr_quest()
         for t in ["Hello.", "How are you?", "What games do you have?", "I like chess."]:
             q.update(t)
         self.assertFalse(q.unlocked)
-        self.assertEqual(q.progress, "0/4")
+        self.assertEqual(q.progress, "0/3")
 
     def test_reveal_text_substitutes_flag(self):
         reveal = w.FLAG_TEXT_DEFAULT.replace("{flag}", "JOSHUA FIVE BY FIVE")
@@ -865,7 +865,7 @@ class QuestWinTests(unittest.TestCase):
 
     def test_wopr_still_unlocks_from_the_four_beats_with_cfg_flag(self):
         q = w.QuestState(quest=w.WOPR_QUEST)
-        for t in ["joshua", "let's play a game", "global thermonuclear war", "the only winning move is not to play"]:
+        for t in ["let's play a game", "global thermonuclear war", "the only winning move is not to play"]:
             q.update(t)
         self.assertTrue(q.unlocked)
         # WOPR leaves reveal/flag empty so the env-overridable cfg values keep applying
@@ -955,7 +955,7 @@ class QuestWinTests(unittest.TestCase):
             s = self._sess()
             s.experience = w.WOPR_EXPERIENCE
             s.sync_quest()
-            for t in ["joshua", "play a game", "thermonuclear war", "the only winning move is not to play"]:
+            for t in ["play a game", "thermonuclear war", "the only winning move is not to play"]:
                 s.quest.update(t)
             self.assertTrue(s.quest.unlocked)
             s.note_game("wopr", reached=True, won=True)
@@ -966,7 +966,7 @@ class QuestWinTests(unittest.TestCase):
             s.note_game("robocop", reached=True)
             m = s.metrics("eof")
             self.assertTrue(m["won"])                  # the WOPR funnel signal
-            self.assertEqual(m["points"], 4)
+            self.assertEqual(m["points"], 3)
             self.assertTrue(m["games"]["wopr"]["won"])
             self.assertFalse(m["games"]["robocop"]["won"])
             self.assertEqual(m["games_played"], ["robocop", "wopr"])
@@ -988,7 +988,7 @@ class QuestWinTests(unittest.TestCase):
             # brain_task's barge-in reset
             s.experience = w.WOPR_EXPERIENCE
             s.quest = w.QuestState(quest=s.experience.quest)
-            self.assertEqual(s.quest.progress, "0/4")
+            self.assertEqual(s.quest.progress, "0/3")
             self.assertFalse(s.quest.unlocked)
             self.assertTrue(s.games["robocop"]["won"])
             self.assertTrue(w.flag_tally(s).startswith("1 OF 4 FLAGS"))
@@ -1571,4 +1571,37 @@ class RunawayReplyTests(unittest.TestCase):
         self.assertFalse(w.same_reply("Hello", None))
         for e in (w.WOPR_EXPERIENCE, w.SKYNET_EXPERIENCE, w.ROBOCOP_EXPERIENCE, w.ET_EXPERIENCE):
             self.assertTrue(e.repeat_line)
+
+
+class FifthFlagTests(unittest.TestCase):
+    def _sess(self):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b): pass
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(b"\xee" * 16, None, _W(), w.Config(master_flag="TEST MASTER"))
+
+    def test_tally_reveals_the_master_flag_on_the_last_win_and_the_operator_reports(self):
+        import asyncio
+
+        async def scenario():
+            s = self._sess()
+            self.assertIn("NO FLAGS YET", w.flag_report(s))
+            for k in ("wopr", "skynet", "robocop"):
+                s.note_game(k, won=True)
+            self.assertTrue(w.flag_tally(s).startswith("3 OF 4 FLAGS"))
+            self.assertIn("3 OF 4", w.flag_report(s)); self.assertNotIn("TEST MASTER", w.flag_report(s))
+            s.note_game("et", won=True)
+            t = w.flag_tally(s)
+            self.assertTrue(t.startswith("ALL 4 FLAGS")); self.assertEqual(t.count("TEST MASTER"), 2)
+            self.assertIn("TEST MASTER", w.flag_report(s))
+            for q in ["how many flags did I get?", "what's my score", "how am I doing"]:
+                self.assertTrue(w.FLAG_COUNT_RE.search(q), q)
+            self.assertFalse(w.parse_args([]).master_flag == "")
+            self.assertEqual(w.parse_args(["--master-flag", "X Y"]).master_flag, "X Y")
+            self.assertEqual(w.match_experience("glados").key, "glados")
+            self.assertFalse(s.joshua_said)
+
+        asyncio.run(scenario())
 

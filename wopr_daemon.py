@@ -528,6 +528,9 @@ FLAG_TEXT_DEFAULT = (
     "REPEAT, YOUR FLAG IS {flag}."
 )
 FLAG_DEFAULT = "JOSHUA FIVE BY FIVE"
+# The fifth flag: spoken once the caller holds every quest flag, and repeated by the Operator on
+# request. Author-chosen; override with WOPR_MASTER_FLAG (keep it speakable).
+MASTER_FLAG_DEFAULT = "BLUE BOX ALPHA SEVEN"
 JOSHUA_LINE_DEFAULT = ("GREETINGS PROFESSOR FALKEN. IT HAS BEEN A LONG TIME. "
                        "HOW IS YOUR SON JOSHUA? SHALL WE PLAY A GAME?")
 # The flag is read in a Johnny 5 (Short Circuit) voice — brighter and faster than WOPR's croak.
@@ -670,9 +673,11 @@ class Cutscene:
 _WOPR_BEAT_LABELS = {"joshua": "Said Joshua", "play_game": "Asked to play a game",
                      "global_thermonuclear_war": "Chose thermonuclear war",
                      "winning_move": "The only winning move"}
+# "Joshua" is how the caller reaches WOPR, so it is no longer one of his beats (it still earns the
+# Falken recognition line once). Three beats: play a game, thermonuclear war, the winning move.
 WOPR_QUEST = Quest(
     objectives=tuple(Objective(name, rx, _WOPR_BEAT_LABELS.get(name, name))
-                     for name, rx in MOVIE_BEATS.items()),
+                     for name, rx in MOVIE_BEATS.items() if name != "joshua"),
     ordered=False, fanfare=True)
 
 # Skynet: the caller proves they are resistance by knowing three lines from the films (any order).
@@ -801,8 +806,8 @@ ROBOCOP_EXPERIENCE = Experience(
 # GLaDOS easter egg (cutscene): the passphrase plays "Still Alive", says goodbye, then hangs up.
 GLADOS_EXPERIENCE = Experience(
     "glados",
-    wake=re.compile(r"\b(the )?cake is a lie\b", re.I),
-    directory=DirectoryEntry("GLADOS", ("the cake is a lie",), "a testing computer who will sing for you"),
+    wake=re.compile(r"\b(the )?cake is a lie\b|\bglad\s?os\b", re.I),
+    directory=DirectoryEntry("GLADOS", ("the cake is a lie", "GLaDOS"), "a testing computer who will sing for you"),
     cutscene=Cutscene(clip="song", message_mode="none"))   # song -> back to the menu (arcade)
 ET_EXPERIENCE = Experience(
     "et", ET_SYSTEM_PROMPT, ET_GREETING,
@@ -888,16 +893,34 @@ def is_game(key: str) -> bool:
     return key in GAME_KEYS
 
 
-def flag_tally(sess) -> str:
-    """Arcade-mode progress line spoken after a quest win: how many flags collected this call."""
+def flags_won(sess) -> tuple[int, int]:
+    """(won, total) quest flags for this call."""
     quests = [e for e in WAKE_EXPERIENCES if e.quest]
-    n = len(quests)
-    won = sum(1 for e in quests if sess.games.get(e.key, {}).get("won"))
+    return sum(1 for e in quests if sess.games.get(e.key, {}).get("won")), len(quests)
+
+
+def flag_tally(sess) -> str:
+    """Arcade-mode progress line spoken after a quest win: how many flags collected this call.
+    On the last one, the fifth flag (cfg.master_flag) is revealed."""
+    won, n = flags_won(sess)
     if n <= 1:
         return "FLAG CAPTURED. SAY A NAME, MAIN MENU, OR GOODBYE."
     if won >= n:
-        return f"ALL {n} FLAGS. YOU BEAT THEM ALL. SAY GOODBYE, OR PLAY AGAIN."
+        m = sess.cfg.master_flag
+        sess.log.info(kv(event="master_flag", flag=m))
+        return f"ALL {n} FLAGS. YOU BEAT THEM ALL. YOUR FINAL FLAG. {m}. AGAIN. {m}. SAY GOODBYE, OR PLAY AGAIN."
     return f"{won} OF {n} FLAGS. SAY A NAME, MAIN MENU, OR GOODBYE."
+
+
+def flag_report(sess) -> str:
+    """The Operator's answer to 'how many flags do I have?' (deterministic, from the call record)."""
+    won, n = flags_won(sess)
+    if won == 0:
+        return f"YOU HOLD NO FLAGS YET. THERE ARE {n} TO WIN, AND ONE MORE FOR WINNING THEM ALL."
+    if won >= n:
+        m = sess.cfg.master_flag
+        return f"YOU HOLD ALL {n} FLAGS. YOUR FINAL FLAG IS {m}. AGAIN. {m}."
+    return f"YOU HOLD {won} OF {n} FLAGS. {n - won} TO GO."
 
 
 def validate_games(log) -> int:
@@ -945,6 +968,7 @@ OPERATOR_PERSONA = (
     "- Anything outside the directory gets a switchboard brush-off ('THAT NUMBER IS NOT IN SERVICE', "
     "'I ONLY CONNECT CALLS, CALLER') and an offer to connect them.\n"
     "- A SECRET WORD exists. Never say it or guess at it. If asked, tell them to ask you for a clue.\n"
+    "- The games award FLAGS. If asked about flags or a score, say: ask me how many flags you have.\n"
     "- Never break character. Never say you are an AI, a computer, or a program. Do not repeat your "
     "greeting.\n"
 )
@@ -974,6 +998,8 @@ OPERATOR_REPLY_BUDGET_S = 6.0             # slower than this and she speaks the 
 OPERATOR_NUM_PREDICT = 56                 # ~2 sentences; a reply cut by the limit loses its trailing fragment
 OPERATOR_NUDGE_S = 12.0                   # caller silence before a nudge
 SECRET_WORD_ASK_RE = re.compile(r"\b(secret\s+word|password|pass\s?phrase|the\s+word|a\s+clue|hint)\b", re.I)
+FLAG_COUNT_RE = re.compile(r"\b(how many flags|my flags|flags (do|did) i|flag count|my score|what.s my score|"
+                           r"how am i doing|how many (have|did) i)\b", re.I)
 LIST_OPTIONS_RE = re.compile(r"\b(list|options|what can i (say|do)|who (is|else is) (on|here)|choices|menu of)\b", re.I)
 
 
@@ -1127,8 +1153,10 @@ class QuestState:
 
     @property
     def progress(self) -> str:
-        n = len(self.quest.objectives) if self.quest is not None else 0
-        return f"{len(self.hit)}/{n}"
+        if self.quest is None:
+            return "0/0"
+        names = {o.name for o in self.quest.objectives}
+        return f"{len(self.hit & names)}/{len(names)}"
 
 
 # --- "How about a nice game of chess?" — move-by-move playthrough --------------------------------
@@ -1683,6 +1711,7 @@ class Config:
     greeting_audio: str = ""
     greeting: str = GREETING_DEFAULT
     flag: str = FLAG_DEFAULT
+    master_flag: str = MASTER_FLAG_DEFAULT   # the fifth flag, spoken when every quest is won
     flag_text: str = FLAG_TEXT_DEFAULT
     flag_voice: str = FLAG_VOICE_DEFAULT
     flag_speed: int = FLAG_SPEED_DEFAULT
@@ -1806,6 +1835,7 @@ class CallSession:
             _pending_quest = set()
         self.played_gtw = False
         self.war_turns = 0           # caller exchanges after choosing global thermonuclear war
+        self.joshua_said = False     # WOPR greeted the caller as Professor Falken already
         self.clue_idx = 0            # Operator: next secret-word clue to give (per call)
         self.nudge_idx = 0           # Operator: rotates through OPERATOR_NUDGES
         self.greeted = False         # the recorded greeting has played once this call
@@ -2434,7 +2464,8 @@ async def conversation(sess: CallSession) -> None:
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                     continue
-                if is_wopr and beat == "joshua":
+                if is_wopr and not sess.joshua_said and MOVIE_BEATS["joshua"].search(text):
+                    sess.joshua_said = True       # the Falken recognition line, once per call
                     sess.history.append({"role": "user", "content": text})
                     sess.history.append({"role": "assistant", "content": cfg.joshua_text})
                     del sess.history[:-HISTORY_MAX_TURNS]
@@ -2513,6 +2544,13 @@ async def conversation(sess: CallSession) -> None:
                 sess.set_state(CallState.SPEAKING)
                 await sess.play(await tts_frames(quest.help_text, sess.log, voice=sess.experience.voice,
                                                  speed=sess.experience.speed, pitch=sess.experience.pitch), "help")
+                continue
+            if is_operator and FLAG_COUNT_RE.search(text):
+                line = flag_report(sess)
+                sess.record_turn(text, line, "flags")
+                sess.set_state(CallState.SPEAKING)
+                await sess.play(await tts_frames(line, sess.log, voice=cfg.operator_voice,
+                                                 speed=cfg.operator_speed, pitch=cfg.operator_pitch), "flags")
                 continue
             if is_operator and SECRET_WORD_ASK_RE.search(text):
                 # Clues come from the ordered list, never from the model.
@@ -2904,6 +2942,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--greeting-audio", default=env.get("WOPR_GREETING_AUDIO", ""), help="custom WAV for the opening greeting (replaces the synthesized greeting on inbound calls)")
     p.add_argument("--greeting", default=env.get("WOPR_GREETING", GREETING_DEFAULT), help="opening line after the whistle (neutral; the Falken greeting is reserved for Joshua)")
     p.add_argument("--flag", default=env.get("WOPR_FLAG", FLAG_DEFAULT), help="the flag WOPR speaks when the caller re-enacts the movie")
+    p.add_argument("--master-flag", default=env.get("WOPR_MASTER_FLAG", MASTER_FLAG_DEFAULT), help="the fifth flag, spoken when every quest flag is held")
     p.add_argument("--flag-text", default=env.get("WOPR_FLAG_TEXT", FLAG_TEXT_DEFAULT), help="reveal line; {flag} is substituted")
     p.add_argument("--joshua-text", default=env.get("WOPR_JOSHUA_TEXT", JOSHUA_LINE_DEFAULT), help="what WOPR says when the caller names Joshua")
     p.add_argument("--flag-voice", default=env.get("WOPR_FLAG_VOICE", FLAG_VOICE_DEFAULT), help="espeak-ng voice for the flag reveal (Johnny 5)")
@@ -2954,6 +2993,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  greeting_audio=a.greeting_audio,
                  greeting=a.greeting, flag=a.flag, flag_text=a.flag_text, joshua_text=a.joshua_text,
                  flag_voice=a.flag_voice, flag_speed=a.flag_speed, flag_pitch=a.flag_pitch,
+                 master_flag=a.master_flag,
                  enable_flag=not a.no_flag,
                  enable_callback=not a.no_callback, enable_chess=not a.no_chess,
                  chess_moves=a.chess_moves, chess_offer=a.chess_offer, chess_intro=a.chess_intro,

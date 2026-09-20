@@ -146,7 +146,7 @@ def build_report(sessions: list[dict], turns: list[dict]) -> tuple[str, dict]:
     for b in BEATS:
         c = sum(1 for s in inbound if b in (s.get("beats") or []))
         L.append(f"    {BEAT_LABEL[b]:<22}{c:>4}  {100*c/denom:5.0f}%")
-    L.append(f"    WON (all four)        {len(won):>4}  {100*len(won)/denom:5.0f}%")
+    L.append(f"    WON (all beats)       {len(won):>4}  {100*len(won)/denom:5.0f}%")
     L.append("")
     L.append("  POINTS PER PLAYER (quest beats, 0–4)")
     pts = Counter(s.get("points", 0) for s in inbound)
