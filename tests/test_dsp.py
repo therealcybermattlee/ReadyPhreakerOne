@@ -883,6 +883,8 @@ class QuestWinTests(unittest.TestCase):
         self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Asta LaVista."), "hasta_la_vista")
         self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Hostel of EASTA."), "hasta_la_vista")   # real call
         self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Be back."), "ill_be_back")               # real call
+        for t in ["Hostile of Easter.", "Hosta Lavista.", "costa la vista"]:
+            self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update(t), "hasta_la_vista", t)
         self.assertFalse(q.unlocked)
         self.assertEqual(q.update("all be back"), "ill_be_back")                # mishear
         self.assertTrue(q.unlocked)
@@ -903,6 +905,12 @@ class QuestWinTests(unittest.TestCase):
         self.assertEqual(q.update("protect the innocent"), "protect")
         self.assertEqual(q.update("uphold the law"), "uphold")
         self.assertTrue(q.unlocked)
+        # mishears from real calls
+        q3 = w.QuestState(quest=w.ROBOCOP_QUEST)
+        self.assertEqual(q3.update("serve the public"), "serve")
+        self.assertEqual(q3.update("protect in a sense"), "protect")
+        self.assertEqual(q3.update("a poll below"), "uphold")
+        self.assertTrue(q3.unlocked)
         # the whole recitation in one breath also counts
         q2 = w.QuestState(quest=w.ROBOCOP_QUEST)
         self.assertEqual(q2.update("serve the public trust, protect the innocent, uphold the law"), "uphold")
@@ -1660,4 +1668,5 @@ class SttConfidenceTests(unittest.TestCase):
         self.assertFalse(w.stt_accept(0.62, -0.78))
         self.assertFalse(w.stt_accept(0.10, -1.20))     # confident it is speech, no idea what
         self.assertTrue(w.stt_accept(0.30, -0.60))      # ordinary phone-quality speech
+        self.assertTrue(w.stt_accept(0.22, -0.95))      # a real, quiet "we'll play a game"
 

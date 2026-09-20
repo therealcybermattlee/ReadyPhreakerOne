@@ -569,6 +569,8 @@ ROBOCOP_SYSTEM_PROMPT = (
     "- The caller is being processed. Order them to recite your three prime directives, IN ORDER, "
     "one at a time: ask for directive one, then two, then three. Give hints (the first word, or "
     "who it protects) but make them say each directive themselves.\n"
+    "- NEVER say 'DIRECTIVE CONFIRMED' or tell the caller a directive was accepted. The system "
+    "confirms directives, not you. If unsure what they said, tell them to repeat it clearly.\n"
     "- Occasionally deliver an iconic line: 'DEAD OR ALIVE, YOU ARE COMING WITH ME.' 'COME QUIETLY "
     "OR THERE WILL BE TROUBLE.' 'THANK YOU FOR YOUR COOPERATION.' 'YOUR MOVE, CREEP.'\n"
     "- Never break character. Never say you are an AI or a language model.\n"
@@ -687,8 +689,8 @@ SKYNET_QUEST = Quest(
         Objective("ill_be_back", re.compile(r"\b(i'?ll|i will|all|i'd|i)\s+be\s+back\b|\bbe\s+back\b|\bbe back\b", re.I),
                   "I'll be back", response="AFFIRMATIVE. I WILL BE BACK."),
         Objective("hasta_la_vista",
-                  re.compile(r"\b(hasta|asta|pasta|hasto|hostel|costa|hasta)\s*(la|of|le)\s*(vista|vesta|feast|easta|vister)\b|"
-                             r"\bhasta\s+la\b|\bla\s*vista\b|\bhostel of\b", re.I),
+                  re.compile(r"\b(hasta|asta|pasta|hasto|hostel|hostile|hosta|costa)\b.{0,12}\b(vista|vesta|feast|easta|easter|vister|lavista)\b|"
+                             r"\bhasta\s+la\b|\bla\s*vista\b|\blavista\b|\bhostel of\b|\bhostile of\b", re.I),
                   "Hasta la vista", response="HASTA LA VISTA, BABY."),
         Objective("judgment_day",
                   re.compile(r"\bjudge?ment\b|\b(august|april|the)\s+(29|twenty[\s-]?nin(e|th))\b|\b1997\b|"
@@ -708,9 +710,10 @@ ROBOCOP_QUEST = Quest(
     objectives=(
         Objective("serve", re.compile(r"\bserve\b.*\b(public|trust)\b|\bpublic\s+trust\b", re.I),
                   "Serve the public trust", response="DIRECTIVE ONE CONFIRMED. SERVE THE PUBLIC TRUST."),
-        Objective("protect", re.compile(r"\bprotect\b.*\binnocen\w*|\binnocen\w*", re.I),
+        Objective("protect", re.compile(r"\bprotect\w*\b|\binnocen\w*", re.I),
                   "Protect the innocent", response="DIRECTIVE TWO CONFIRMED. PROTECT THE INNOCENT."),
-        Objective("uphold", re.compile(r"\bup\s?hold\b|\bthe\s+law\b", re.I),
+        Objective("uphold", re.compile(r"\bup\s?hold\b|\bthe\s+law\b|\ba\s+(poll|pull|full|pole)\b|\bappalled\b|"
+                                       r"\bbelow\b|\bthe\s+lot\b", re.I),
                   "Uphold the law", response="DIRECTIVE THREE CONFIRMED. UPHOLD THE LAW."),
     ),
     ordered=True,
@@ -1395,7 +1398,7 @@ STT_PROMPT_DEFAULT = ("A phone call to WOPR, the computer from WarGames. The cal
 # no_speech 0.65 / logprob -0.54; real speech on the same call scored 0.01 / -0.07. Below these
 # bars a transcript is discarded rather than acted on.
 STT_NO_SPEECH_MAX = 0.5
-STT_LOGPROB_MIN = -0.9
+STT_LOGPROB_MIN = -1.0        # a real, quiet "we'll play a game" scored -0.95; the noise cases sit at nsp > 0.6
 
 
 def stt_accept(no_speech: float, logprob: float) -> bool:
