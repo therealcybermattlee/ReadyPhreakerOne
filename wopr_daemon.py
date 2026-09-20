@@ -838,6 +838,10 @@ def validate_games(log) -> int:
     return bad
 
 
+# Clip played once per call on the first exchange after the caller chooses global thermonuclear war
+# (a "war turn"): <intro_dir>/wopr-war-turn.wav. Optional; nothing plays if the file is absent.
+WAR_TURN_CLIP = "wopr-war-turn"
+
 # Arcade mode: said inside any game, these drop the caller back to the menu to try another game.
 MENU_RETURN_RE = re.compile(
     r"\b(main menu|back to (the )?menu|go back|next game|another game|other games?|"
@@ -1540,6 +1544,7 @@ class CallSession:
                              have=",".join(sorted(self.quest.hit))))
             _pending_quest = set()
         self.played_gtw = False
+        self.war_turns = 0           # caller exchanges after choosing global thermonuclear war
         self.in_chess = False        # caller is in a move-by-move chess playthrough
         self.chess_idx = 0           # ply index into cfg.chess_moves
         self.chess_offered = False   # WOPR offered chess (post-flag); a yes starts the game
@@ -2019,7 +2024,8 @@ async def conversation(sess: CallSession) -> None:
                 sess.experience = target
                 sess.detected_evt.set()
                 return
-            if is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text):
+            gtw_now = bool(is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text))
+            if gtw_now:
                 sess.played_gtw = True
             # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
             if is_wopr and cfg.enable_chess and sess.in_chess:
@@ -2138,6 +2144,16 @@ async def conversation(sess: CallSession) -> None:
                             sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                         continue
                     # no canned response: fall through to the LLM so the character reacts in voice
+            if is_wopr and sess.played_gtw and not gtw_now and not sess.quest.unlocked:
+                # A turn of the war is being played. On the first one, NORAD reacts: wopr-war-turn.wav
+                # (General Beringer's spark plug line), then WOPR answers as usual.
+                sess.war_turns += 1
+                war_clip = clip_for(WAR_TURN_CLIP) if sess.war_turns == 1 else None
+                if war_clip:
+                    sess.set_state(CallState.SPEAKING)
+                    await sess.play(war_clip, "war_turn")
+                    if sess.interrupted:
+                        continue
             if cfg.stub_llm:
                 reply = stub_reply()
                 sess.log.info(kv(event="llm", ms=0.0, stub=1, chars=len(reply)))

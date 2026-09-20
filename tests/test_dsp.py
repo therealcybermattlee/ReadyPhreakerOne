@@ -1320,3 +1320,22 @@ class SpeechBargeInTests(unittest.TestCase):
     def test_terminator_summons_skynet_and_names_switch_games(self):
         for t in ["skynet", "sky net", "terminator", "sarah connor"]:
             self.assertEqual(w.match_experience(t).key, "skynet", t)
+
+
+class WarTurnTests(unittest.TestCase):
+    def test_session_counts_war_turns_and_clip_key_is_declared(self):
+        import asyncio
+
+        async def scenario():
+            class _W:
+                def get_extra_info(self, k): return None
+                def write(self, b): pass
+                async def drain(self): pass
+                def close(self): pass
+            sess = w.CallSession(b"\xcc" * 16, None, _W(), w.Config())
+            self.assertEqual(sess.war_turns, 0)
+            self.assertFalse(sess.played_gtw)
+            self.assertEqual(w.WAR_TURN_CLIP, "wopr-war-turn")
+
+        asyncio.run(scenario())
+
