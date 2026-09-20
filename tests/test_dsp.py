@@ -1650,3 +1650,12 @@ class OperatorMissesTests(unittest.TestCase):
             self.assertIn(name, line)
         self.assertNotIn("HAL", line); self.assertIsNone(w.PEEWEE_EXPERIENCE.wake.search(line))
 
+
+class SttConfidenceTests(unittest.TestCase):
+    def test_doubtful_transcripts_are_rejected(self):
+        self.assertTrue(w.stt_accept(0.01, -0.07))      # "I'll be back", real speech
+        self.assertFalse(w.stt_accept(0.65, -0.54))     # "Kickflip" from handset clicks
+        self.assertFalse(w.stt_accept(0.62, -0.78))
+        self.assertFalse(w.stt_accept(0.10, -1.20))     # confident it is speech, no idea what
+        self.assertTrue(w.stt_accept(0.30, -0.60))      # ordinary phone-quality speech
+

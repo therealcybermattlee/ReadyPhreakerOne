@@ -1390,11 +1390,27 @@ STT_PROMPT_DEFAULT = ("A phone call to WOPR, the computer from WarGames. The cal
                       "global thermonuclear war, the only winning move is not to play.")
 
 
-def _stt_blocking(model, audio16k: np.ndarray, prompt: str) -> str:
+# Whisper primed with character names will turn handset noise into a name ("Kickflip" from 480-RMS
+# clicks mid-Skynet, 2026-09-20). It also reports how sure it is: that utterance scored
+# no_speech 0.65 / logprob -0.54; real speech on the same call scored 0.01 / -0.07. Below these
+# bars a transcript is discarded rather than acted on.
+STT_NO_SPEECH_MAX = 0.5
+STT_LOGPROB_MIN = -0.9
+
+
+def stt_accept(no_speech: float, logprob: float) -> bool:
+    return no_speech <= STT_NO_SPEECH_MAX and logprob >= STT_LOGPROB_MIN
+
+
+def _stt_blocking(model, audio16k: np.ndarray, prompt: str) -> tuple[str, float, float]:
     segments, _info = model.transcribe(
         audio16k, language="en", beam_size=1, vad_filter=False, without_timestamps=True,
         condition_on_previous_text=False, initial_prompt=prompt or None)
-    return " ".join(s.text.strip() for s in segments).strip()
+    segs = list(segments)
+    text = " ".join(s.text.strip() for s in segs).strip()
+    no_speech = max((s.no_speech_prob for s in segs), default=0.0)
+    logprob = min((s.avg_logprob for s in segs), default=0.0)
+    return text, no_speech, logprob
 
 
 async def transcribe(pcm8k: bytes, whisper_name: str, log: CallLogger | None = None,
@@ -1408,11 +1424,17 @@ async def transcribe(pcm8k: bytes, whisper_name: str, log: CallLogger | None = N
         async with _stt_sem:
             try:
                 model = await asyncio.to_thread(get_whisper, whisper_name)
-                text = await asyncio.to_thread(_stt_blocking, model, audio16k, prompt)
+                text, no_speech, logprob = await asyncio.to_thread(_stt_blocking, model, audio16k, prompt)
             except Exception as e:  # noqa: BLE001 — any STT failure is recoverable
                 raise PipelineError("stt", f"{type(e).__name__}: {e}")
+    if text and not stt_accept(no_speech, logprob):
+        if log:
+            log.info(kv(event="stt_rejected", text=text, no_speech=round(no_speech, 2), logprob=round(logprob, 2),
+                        ms=sw.ms, audio_ms=len(pcm8k) / 16))
+        return ""
     if log:
-        log.info(kv(event="stt", text=text, ms=sw.ms, audio_ms=len(pcm8k) / 16))
+        log.info(kv(event="stt", text=text, no_speech=round(no_speech, 2), logprob=round(logprob, 2),
+                    ms=sw.ms, audio_ms=len(pcm8k) / 16))
     return text
 
 
