@@ -694,8 +694,7 @@ SKYNET_QUEST = Quest(
                   re.compile(r"\bjudge?ment\b|\b(august|april|the)\s+(29|twenty[\s-]?nin(e|th))\b|\b1997\b|"
                              r"\btwo\s+(fourteen|14)\b|\b2[:.]14\b", re.I),
                   "Judgment Day",
-                  response="JUDGMENT DAY. AUGUST TWENTY NINTH, NINETEEN NINETY SEVEN. "
-                           "THREE BILLION HUMAN LIVES."),
+                  response="JUDGMENT DAY. THREE BILLION HUMAN LIVES."),
     ),
     ordered=False,
     help_re=re.compile(r"\b(what do you want|how do i prove|what (do|should) i say|prove it|hint|help|"
@@ -783,8 +782,8 @@ class Experience:
 
 WOPR_EXPERIENCE = Experience(
     "wopr", WOPR_SYSTEM_PROMPT, GREETING_DEFAULT,
-    wake=re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I),
-    directory=DirectoryEntry("WOPR", ("Joshua",), "a war computer that wants to play a game"),
+    wake=re.compile(r"\b(josh\w*|noshua|yoshua|joshy|wop+e?r|waper|whopper|wopper|w\.o\.p\.r\.?)\b", re.I),
+    directory=DirectoryEntry("WOPR", ("Joshua", "WOPR"), "a war computer that wants to play a game"),
     repeat_line="A STRANGE GAME, PROFESSOR FALKEN. WHAT IS YOUR NEXT MOVE?",
     quest=WOPR_QUEST)
 SKYNET_EXPERIENCE = Experience(

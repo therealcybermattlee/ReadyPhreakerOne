@@ -537,6 +537,9 @@ class WakeExperienceTests(unittest.TestCase):
         cases = {
             "please say joshua": "wopr",
             "noshua": "wopr",
+            "WAPER.": "wopr",                 # Whisper for WOPR, heard on a real call
+            "connect me to wopr": "wopr",
+            "whopper": "wopr",
             "i am looking for sarah connor": "skynet",
             "where is john connor": "skynet",
             "sara conor": "skynet",           # STT mishear
