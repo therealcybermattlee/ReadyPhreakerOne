@@ -1512,3 +1512,19 @@ class QuestHelpTests(unittest.TestCase):
         for t in ["in menu", "the menu please", "menu", "main menu", "operator"]:
             self.assertTrue(w.MENU_RETURN_RE.search(t), t)
 
+
+class OrderedFeedbackTests(unittest.TestCase):
+    def test_out_of_order_is_reported_with_the_due_objective(self):
+        q = w.QuestState(quest=w.ROBOCOP_QUEST)
+        self.assertIsNone(q.update("uphold the law"))
+        self.assertEqual(q.out_of_order, "uphold")
+        self.assertEqual(q.next_index, 0)
+        self.assertEqual(w.ROBOCOP_QUEST.order_text.format(n=1, label="Serve the public trust"),
+                         "INCORRECT SEQUENCE. DIRECTIVE 1 FIRST. Serve the public trust.")
+        self.assertEqual(q.update("serve the public trust"), "serve")
+        self.assertIsNone(q.out_of_order)
+        self.assertIsNone(q.update("a pulled the law"))      # the mishear still names 'the law'
+        self.assertEqual(q.out_of_order, "uphold"); self.assertEqual(q.next_index, 1)
+        self.assertIsNone(q.update("how are you today"))     # unrelated: no flag
+        self.assertIsNone(q.out_of_order)
+

@@ -649,6 +649,8 @@ class Quest:
     reveal_intro: str = ""                  # intro-clip key played before the reveal
     help_re: "re.Pattern | None" = None     # caller asks what to do -> speak help_text, no LLM
     help_text: str = ""
+    order_text: str = ""                    # ordered quests: spoken when a later objective is said too early;
+                                            # {n} = number of the objective that is due, {label} its label
 
 
 @dataclasses.dataclass(frozen=True)
@@ -690,8 +692,7 @@ SKYNET_QUEST = Quest(
     ordered=False,
     help_re=re.compile(r"\b(what do you want|how do i prove|what (do|should) i say|prove it|hint|help|"
                        r"what (are|were) the (lines|words)|what do i need)\b", re.I),
-    help_text="PROVE YOU ARE RESISTANCE. WHAT DO I SAY WHEN I LEAVE. WHAT DO I SAY BEFORE I FIRE. "
-              "WHAT DAY DOES SKYNET WAKE UP. ANSWER ALL THREE.",
+    help_text="PROVE IT. WHAT DO I SAY WHEN I LEAVE. WHAT DO I SAY BEFORE I FIRE. WHAT DAY DOES SKYNET WAKE.",
     reveal="YOU KNOW THE FUTURE. YOU ARE WITH THE RESISTANCE. COME WITH ME IF YOU WANT TO LIVE. "
            "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
     flag="CYBERDYNE MODEL ONE ZERO ONE", fanfare=True)
@@ -709,8 +710,9 @@ ROBOCOP_QUEST = Quest(
     ordered=True,
     help_re=re.compile(r"\b(prime directives?|directives|what do you want|what (do|should) i say|"
                        r"how do i|hint|help|what are (they|the rules))\b", re.I),
-    help_text="MY PRIME DIRECTIVES. ONE, SERVE THE PUBLIC TRUST. TWO, PROTECT THE INNOCENT. "
-              "THREE, UPHOLD THE LAW. RECITE THEM TO ME. IN ORDER. STARTING WITH ONE.",
+    help_text="ONE, SERVE THE PUBLIC TRUST. TWO, PROTECT THE INNOCENT. THREE, UPHOLD THE LAW. "
+              "RECITE THEM. IN ORDER.",
+    order_text="INCORRECT SEQUENCE. DIRECTIVE {n} FIRST. {label}.",
     reveal="ALL PRIME DIRECTIVES CONFIRMED. THANK YOU FOR YOUR COOPERATION. "
            "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
     flag="DIRECTIVE FOUR CLASSIFIED", fanfare=True)
@@ -788,7 +790,7 @@ SKYNET_EXPERIENCE = Experience(
 ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
-    voice="en-us+klatt", speed=133, pitch=30,  # processed, clipped, monotone
+    voice="en-us+klatt", speed=150, pitch=30,  # processed, clipped, monotone
     directory=DirectoryEntry("ROBOCOP", ("RoboCop", "Murphy"), "a cyborg officer with prime directives"),
     quest=ROBOCOP_QUEST)
 # GLaDOS easter egg (cutscene): the passphrase plays "Still Alive", says goodbye, then hangs up.
@@ -1049,9 +1051,21 @@ class QuestState:
     quest: "Quest | None" = None
     hit: set = dataclasses.field(default_factory=set)
     unlocked: bool = False
+    out_of_order: "str | None" = None       # ordered quests: a later objective was said before its turn
+
+    @property
+    def next_index(self) -> int:
+        """0-based index of the first unmet objective (ordered quests)."""
+        if self.quest is None:
+            return 0
+        for i, o in enumerate(self.quest.objectives):
+            if o.name not in self.hit:
+                return i
+        return len(self.quest.objectives)
 
     def update(self, text: str) -> str | None:
         """Feed one caller utterance. Returns the name of a newly-hit objective, or None."""
+        self.out_of_order = None
         if self.quest is None:
             return None
         objs = self.quest.objectives
@@ -1066,6 +1080,12 @@ class QuestState:
                     break
                 self.hit.add(o.name)
                 newly = o.name
+            if newly is None:
+                nxt = self.next_index
+                for o in objs[nxt + 1:]:
+                    if o.matcher.search(text or ""):
+                        self.out_of_order = o.name
+                        break
         else:
             for o in objs:
                 if o.name not in self.hit and o.matcher.search(text or ""):
@@ -2372,6 +2392,23 @@ async def conversation(sess: CallSession) -> None:
                     try:
                         sess.set_state(CallState.SPEAKING)
                         await sess.play(await tts_frames(cfg.joshua_text, sess.log), "joshua")
+                    except PipelineError as e:
+                        sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                    continue
+                if beat is None and sess.quest.out_of_order and quest.order_text:
+                    # An ordered quest heard a later objective too early: say which one is due.
+                    nxt = sess.quest.next_index
+                    due = quest.objectives[nxt] if nxt < len(quest.objectives) else quest.objectives[-1]
+                    line = quest.order_text.format(n=nxt + 1, label=due.label or due.name)
+                    sess.log.info(kv(event="quest_order", key=sess.experience.key, said=sess.quest.out_of_order, due=due.name))
+                    sess.history.append({"role": "user", "content": text})
+                    sess.history.append({"role": "assistant", "content": line})
+                    del sess.history[:-HISTORY_MAX_TURNS]
+                    sess.record_turn(text, line, "order")
+                    try:
+                        sess.set_state(CallState.SPEAKING)
+                        await sess.play(await tts_frames(line, sess.log, voice=sess.experience.voice,
+                                                         speed=sess.experience.speed, pitch=sess.experience.pitch), "order")
                     except PipelineError as e:
                         sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                     continue
