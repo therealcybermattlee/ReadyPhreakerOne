@@ -881,6 +881,8 @@ class QuestWinTests(unittest.TestCase):
         self.assertEqual(q.update("judgement day is coming"), "judgment_day")   # STT spelling
         self.assertEqual(q.update("pasta la vista baby"), "hasta_la_vista")     # mishear
         self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Asta LaVista."), "hasta_la_vista")
+        self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Hostel of EASTA."), "hasta_la_vista")   # real call
+        self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Be back."), "ill_be_back")               # real call
         self.assertFalse(q.unlocked)
         self.assertEqual(q.update("all be back"), "ill_be_back")                # mishear
         self.assertTrue(q.unlocked)

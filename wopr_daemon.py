@@ -684,11 +684,11 @@ WOPR_QUEST = Quest(
 # Matchers accept common local-STT mishears ("all be back", "pasta la vista", "judgement day").
 SKYNET_QUEST = Quest(
     objectives=(
-        Objective("ill_be_back", re.compile(r"\b(i'?ll|i will|all|i'd|i)\s+be\s+back\b", re.I),
+        Objective("ill_be_back", re.compile(r"\b(i'?ll|i will|all|i'd|i)\s+be\s+back\b|\bbe\s+back\b|\bbe back\b", re.I),
                   "I'll be back", response="AFFIRMATIVE. I WILL BE BACK."),
         Objective("hasta_la_vista",
-                  re.compile(r"\b(hasta|asta|pasta|hasto)\s*la\s*(vista|vesta|feast)\b|\bhasta\s+la\b|"
-                             r"\bla\s*vista\b", re.I),
+                  re.compile(r"\b(hasta|asta|pasta|hasto|hostel|costa|hasta)\s*(la|of|le)\s*(vista|vesta|feast|easta|vister)\b|"
+                             r"\bhasta\s+la\b|\bla\s*vista\b|\bhostel of\b", re.I),
                   "Hasta la vista", response="HASTA LA VISTA, BABY."),
         Objective("judgment_day",
                   re.compile(r"\bjudge?ment\b|\b(august|april|the)\s+(29|twenty[\s-]?nin(e|th))\b|\b1997\b|"
