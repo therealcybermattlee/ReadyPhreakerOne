@@ -693,8 +693,7 @@ SKYNET_QUEST = Quest(
     help_re=re.compile(r"\b(what do you want|how do i prove|what (do|should) i say|prove it|hint|help|"
                        r"what (are|were) the (lines|words)|what do i need)\b", re.I),
     help_text="PROVE IT. WHAT DO I SAY WHEN I LEAVE. WHAT DO I SAY BEFORE I FIRE. WHAT DAY DOES SKYNET WAKE.",
-    reveal="YOU KNOW THE FUTURE. YOU ARE WITH THE RESISTANCE. COME WITH ME IF YOU WANT TO LIVE. "
-           "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
+    reveal="COME WITH ME IF YOU WANT TO LIVE. YOUR FLAG. {flag}. AGAIN. {flag}.",
     flag="CYBERDYNE MODEL ONE ZERO ONE", fanfare=True)
 
 # RoboCop: recite the three prime directives IN ORDER (ordered=True; one breath is fine).
@@ -713,8 +712,7 @@ ROBOCOP_QUEST = Quest(
     help_text="ONE, SERVE THE PUBLIC TRUST. TWO, PROTECT THE INNOCENT. THREE, UPHOLD THE LAW. "
               "RECITE THEM. IN ORDER.",
     order_text="INCORRECT SEQUENCE. DIRECTIVE {n} FIRST. {label}.",
-    reveal="ALL PRIME DIRECTIVES CONFIRMED. THANK YOU FOR YOUR COOPERATION. "
-           "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
+    reveal="DIRECTIVES CONFIRMED. YOUR FLAG. {flag}. REPEAT. {flag}.",
     flag="DIRECTIVE FOUR CLASSIFIED", fanfare=True)
 
 # E.T.: bring the three parts of the communicator (any order); the reveal is E.T. phoning home.
@@ -733,8 +731,7 @@ ET_QUEST = Quest(
     help_re=re.compile(r"\b(what do you (need|want)|how can i help|what (do|should) i (say|bring)|"
                        r"hint|help|what are you building)\b", re.I),
     help_text="E.T. NEED THREE THINGS. SPEAK AND SPELL. UMBRELLA. RECORD PLAYER. BRING THEM. ONE AT A TIME.",
-    reveal="PHONE. HOME. E.T. PHONE HOME. THEY COME. YOUR FLAG IS {flag}. AGAIN. YOUR FLAG IS {flag}. "
-           "BE GOOD.",
+    reveal="THEY COME. YOUR FLAG. {flag}. AGAIN. {flag}. BE GOOD.",
     flag="I WILL BE RIGHT HERE", fanfare=True)
 
 
@@ -887,10 +884,10 @@ def flag_tally(sess) -> str:
     n = len(quests)
     won = sum(1 for e in quests if sess.games.get(e.key, {}).get("won"))
     if n <= 1:
-        return "FLAG CAPTURED. SAY ANOTHER NAME, SAY MAIN MENU, OR SAY GOODBYE."
+        return "FLAG CAPTURED. SAY A NAME, MAIN MENU, OR GOODBYE."
     if won >= n:
-        return f"THAT IS ALL {n} FLAGS. YOU HAVE BEATEN THEM ALL. SAY GOODBYE, OR PLAY AGAIN."
-    return f"THAT IS {won} OF {n} FLAGS. SAY ANOTHER NAME, SAY MAIN MENU, OR SAY GOODBYE."
+        return f"ALL {n} FLAGS. YOU BEAT THEM ALL. SAY GOODBYE, OR PLAY AGAIN."
+    return f"{won} OF {n} FLAGS. SAY A NAME, MAIN MENU, OR GOODBYE."
 
 
 def validate_games(log) -> int:
@@ -2405,6 +2402,8 @@ async def conversation(sess: CallSession) -> None:
                     sess.history.append({"role": "assistant", "content": line})
                     del sess.history[:-HISTORY_MAX_TURNS]
                     sess.record_turn(text, line, "order")
+                    sess.turns += 1
+                    sess.note_game(sess.experience.key, turn=True)
                     try:
                         sess.set_state(CallState.SPEAKING)
                         await sess.play(await tts_frames(line, sess.log, voice=sess.experience.voice,
@@ -2428,6 +2427,8 @@ async def conversation(sess: CallSession) -> None:
                         sess.history.append({"role": "assistant", "content": obj.response})
                         del sess.history[:-HISTORY_MAX_TURNS]
                         sess.record_turn(text, obj.response, "objective")
+                        sess.turns += 1
+                        sess.note_game(sess.experience.key, turn=True)
                         try:
                             sess.set_state(CallState.SPEAKING)
                             await sess.play(await tts_frames(obj.response, sess.log,
@@ -2454,6 +2455,8 @@ async def conversation(sess: CallSession) -> None:
                 sess.history.append({"role": "assistant", "content": quest.help_text})
                 del sess.history[:-HISTORY_MAX_TURNS]
                 sess.record_turn(text, quest.help_text, "help")
+                sess.turns += 1
+                sess.note_game(sess.experience.key, turn=True)
                 sess.set_state(CallState.SPEAKING)
                 await sess.play(await tts_frames(quest.help_text, sess.log, voice=sess.experience.voice,
                                                  speed=sess.experience.speed, pitch=sess.experience.pitch), "help")

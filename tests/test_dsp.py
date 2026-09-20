@@ -936,10 +936,10 @@ class QuestWinTests(unittest.TestCase):
             n = sum(1 for e in w.WAKE_EXPERIENCES if e.quest)
             self.assertEqual(n, 4)
             s.note_game("wopr", won=True)
-            self.assertIn(f"1 OF {n} FLAGS", w.flag_tally(s))
+            self.assertTrue(w.flag_tally(s).startswith(f"1 OF {n} FLAGS"))
             for k in ("skynet", "robocop", "et"):
                 s.note_game(k, won=True)
-            self.assertIn(f"ALL {n} FLAGS", w.flag_tally(s))
+            self.assertTrue(w.flag_tally(s).startswith(f"ALL {n} FLAGS"))
 
         asyncio.run(scenario())
 
@@ -987,7 +987,7 @@ class QuestWinTests(unittest.TestCase):
             self.assertEqual(s.quest.progress, "0/4")
             self.assertFalse(s.quest.unlocked)
             self.assertTrue(s.games["robocop"]["won"])
-            self.assertIn("1 OF 4 FLAGS", w.flag_tally(s))
+            self.assertTrue(w.flag_tally(s).startswith("1 OF 4 FLAGS"))
 
         asyncio.run(scenario())
 
