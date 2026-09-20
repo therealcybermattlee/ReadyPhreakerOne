@@ -1366,8 +1366,10 @@ class SpeechBargeInTests(unittest.TestCase):
         asyncio.run(scenario())
 
     def test_terminator_summons_skynet_and_names_switch_games(self):
-        for t in ["skynet", "sky net", "terminator", "sarah connor"]:
+        for t in ["skynet", "sky net", "terminator", "sarah connor", "I said sky and head", "sky nut"]:
             self.assertEqual(w.match_experience(t).key, "skynet", t)
+        for t in ["E2.", "e tea", "E.T.", "phone home"]:
+            self.assertEqual(w.match_experience(t).key, "et", t)
 
 
 class WarTurnTests(unittest.TestCase):
@@ -1447,6 +1449,11 @@ class OperatorTests(unittest.TestCase):
         self.assertEqual(out, w.OPERATOR_FALLBACK)   # nothing speakable
         out, removed = w.operator_filter("SAY JOSHUA FOR THE WAR COMPUTER, HON.")
         self.assertEqual(out, "SAY JOSHUA FOR THE WAR COMPUTER, HON."); self.assertEqual(removed, [])
+        # a reply cut off by the token limit keeps only its complete sentences
+        out, _ = w.operator_filter("SAY 'SKYNET' FOR A TERMINATOR. SAY 'ROBOCOP' FOR")
+        self.assertEqual(out, "SAY 'SKYNET' FOR A TERMINATOR.")
+        out, _ = w.operator_filter("SAY 'ROBOCOP' FOR A CY")
+        self.assertEqual(out, "SAY 'ROBOCOP' FOR A CY.")   # no complete sentence to fall back to
 
     def test_clue_and_options_intercepts(self):
         for t in ["what's the secret word", "give me a hint", "is there a password"]:

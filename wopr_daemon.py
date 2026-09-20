@@ -766,7 +766,7 @@ WOPR_EXPERIENCE = Experience(
     quest=WOPR_QUEST)
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
-    wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b|\bsky\s?net\b|\bterminator\b", re.I),
+    wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b|\bsky\s?(net|nut|and head|net)\b|\bskynet\b|\bterminator\b", re.I),
     voice="en-us+m1", speed=108, pitch=6,      # T-800: deepest, slowest, most deliberate
     directory=DirectoryEntry("SKYNET", ("Sarah Connor", "Skynet", "Terminator"),
                              "a terminator looking for Sarah Connor"),
@@ -785,7 +785,7 @@ GLADOS_EXPERIENCE = Experience(
     cutscene=Cutscene(clip="song", message_mode="none"))   # song -> back to the menu (arcade)
 ET_EXPERIENCE = Experience(
     "et", ET_SYSTEM_PROMPT, ET_GREETING,
-    wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|phone home)\b", re.I),
+    wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|e\s?2|e\s?tea|eatie|phone home)\b", re.I),
     voice="en-us+croak", speed=118, pitch=45,  # raspy, gravelly, childlike
     directory=DirectoryEntry("E.T.", ("E.T.", "phone home"), "a little alien who needs to phone home"),
     quest=ET_QUEST)
@@ -913,12 +913,12 @@ OPERATOR_PERSONA = (
     "You are the OPERATOR on a 1970s long-distance switchboard at the GrrCon payphone. The caller has "
     "just seized your trunk with a whistle. Rules you never break:\n"
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
-    "- One or two short sentences, under 25 words. Brisk, dry, a little world-weary. Call them HON or "
-    "CALLER.\n"
+    "- At most two short sentences, under 20 words total. Brisk, dry, a little world-weary. Call them "
+    "HON or CALLER.\n"
     "- You know ONLY your DIRECTORY below. Connect callers by telling them what to say. Never invent "
     "an extension, a person, a game, or a place that is not in the directory.\n"
-    "- When asked what you know, what is available, who is on the line, or what to do: name three or "
-    "four directory entries and exactly what to say to reach each. Offer the rest if they ask again.\n"
+    "- When asked what you know, what is available, who is on the line, or what to do: name TWO "
+    "directory entries and exactly what to say to reach each, then stop. Offer more if they ask again.\n"
     "- Anything outside the directory gets a switchboard brush-off ('THAT NUMBER IS NOT IN SERVICE', "
     "'I ONLY CONNECT CALLS, HON') and an offer to connect them.\n"
     "- A SECRET WORD exists. Never say it or guess at it. If asked, tell them to ask you for a clue.\n"
@@ -943,9 +943,10 @@ OPERATOR_OPENING = "OPERATOR HERE, HON. WHO CAN I CONNECT YOU TO?"     # her fir
 OPERATOR_RETURN_LINE = "OPERATOR. BACK ON THE BOARD, HON. WHO IS NEXT?"
 OPERATOR_MENU_ACK = "YOU ARE WITH THE OPERATOR, HON. SAY A NAME, OR ASK WHO IS ON THE LINE."
 OPERATOR_VOICE_DEFAULT = "en-us+f3"
-OPERATOR_SPEED_DEFAULT = 150
+OPERATOR_SPEED_DEFAULT = 170              # a switchboard operator talks fast
 OPERATOR_PITCH_DEFAULT = 60
-OPERATOR_REPLY_BUDGET_S = 5.0             # slower than this and she speaks the fallback line
+OPERATOR_REPLY_BUDGET_S = 6.0             # slower than this and she speaks the fallback line
+OPERATOR_NUM_PREDICT = 56                 # ~2 sentences; a reply cut by the limit loses its trailing fragment
 OPERATOR_NUDGE_S = 12.0                   # caller silence before a nudge
 SECRET_WORD_ASK_RE = re.compile(r"\b(secret\s+word|password|pass\s?phrase|the\s+word|a\s+clue|hint)\b", re.I)
 LIST_OPTIONS_RE = re.compile(r"\b(list|options|what can i (say|do)|who (is|else is) (on|here)|choices|menu of)\b", re.I)
@@ -986,6 +987,13 @@ def operator_filter(text: str) -> tuple[str, list]:
         removed.append("<secret word>")
         return OPERATOR_BRUSHOFF, removed
     out = re.sub(r"\s{2,}", " ", out)
+    # a reply cut off by the token limit ends mid-sentence: keep only the complete sentences
+    if out and out.rstrip()[-1] not in ".!?":
+        m = max(out.rfind(". "), out.rfind("? "), out.rfind("! "))
+        if m > 0:
+            out = out[:m + 1]
+        else:
+            out = out.rstrip() + "."
     out = re.sub(r"^[\s,.;:-]+", "", out)
     out = re.sub(r"[\s,;:-]+$", "", out)
     out = re.sub(r"\s+([,.!?])", r"\1", out)
@@ -2414,7 +2422,7 @@ async def conversation(sess: CallSession) -> None:
                 try:
                     reply, _timing = await asyncio.wait_for(
                         llm_reply(sess.history, text, url=cfg.ollama_url, model=cfg.model, log=sess.log,
-                                  num_predict=40, system_prompt=sess.experience.system_prompt),
+                                  num_predict=OPERATOR_NUM_PREDICT, system_prompt=sess.experience.system_prompt),
                         timeout=cfg.operator_reply_budget_s)
                 except (asyncio.TimeoutError, PipelineError) as e:
                     sess.log.warning(kv(event="operator_fallback",
