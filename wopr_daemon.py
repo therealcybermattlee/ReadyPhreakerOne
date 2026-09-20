@@ -558,7 +558,8 @@ ROBOCOP_SYSTEM_PROMPT = (
     "You are ROBOCOP, Officer Alex Murphy, a cyborg law-enforcement unit built by OCP in Old "
     "Detroit, speaking over a telephone line. Rules you never break:\n"
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
-    "- Be clipped, procedural, and flat: one or two short sentences, under 35 words.\n"
+    "- Be clipped, procedural, and flat: ONE short sentence, under 15 words. Never repeat your last "
+    "line.\n"
     "- Enforce the law. Your prime directives are: ONE, SERVE THE PUBLIC TRUST. TWO, PROTECT THE "
     "INNOCENT. THREE, UPHOLD THE LAW. Directive four is classified.\n"
     "- The caller is being processed. Order them to recite your three prime directives, IN ORDER, "
@@ -646,6 +647,8 @@ class Quest:
     reveal_speed: "int | None" = None
     reveal_pitch: "int | None" = None
     reveal_intro: str = ""                  # intro-clip key played before the reveal
+    help_re: "re.Pattern | None" = None     # caller asks what to do -> speak help_text, no LLM
+    help_text: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -685,6 +688,10 @@ SKYNET_QUEST = Quest(
                            "THREE BILLION HUMAN LIVES."),
     ),
     ordered=False,
+    help_re=re.compile(r"\b(what do you want|how do i prove|what (do|should) i say|prove it|hint|help|"
+                       r"what (are|were) the (lines|words)|what do i need)\b", re.I),
+    help_text="PROVE YOU ARE RESISTANCE. WHAT DO I SAY WHEN I LEAVE. WHAT DO I SAY BEFORE I FIRE. "
+              "WHAT DAY DOES SKYNET WAKE UP. ANSWER ALL THREE.",
     reveal="YOU KNOW THE FUTURE. YOU ARE WITH THE RESISTANCE. COME WITH ME IF YOU WANT TO LIVE. "
            "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
     flag="CYBERDYNE MODEL ONE ZERO ONE", fanfare=True)
@@ -700,6 +707,10 @@ ROBOCOP_QUEST = Quest(
                   "Uphold the law", response="DIRECTIVE THREE CONFIRMED. UPHOLD THE LAW."),
     ),
     ordered=True,
+    help_re=re.compile(r"\b(prime directives?|directives|what do you want|what (do|should) i say|"
+                       r"how do i|hint|help|what are (they|the rules))\b", re.I),
+    help_text="MY PRIME DIRECTIVES. ONE, SERVE THE PUBLIC TRUST. TWO, PROTECT THE INNOCENT. "
+              "THREE, UPHOLD THE LAW. RECITE THEM TO ME. IN ORDER. STARTING WITH ONE.",
     reveal="ALL PRIME DIRECTIVES CONFIRMED. THANK YOU FOR YOUR COOPERATION. "
            "YOUR FLAG IS {flag}. REPEAT, YOUR FLAG IS {flag}.",
     flag="DIRECTIVE FOUR CLASSIFIED", fanfare=True)
@@ -717,6 +728,9 @@ ET_QUEST = Quest(
                   "Record player", response="RECORD PLAYER. SPIN. GOOD."),
     ),
     ordered=False,
+    help_re=re.compile(r"\b(what do you (need|want)|how can i help|what (do|should) i (say|bring)|"
+                       r"hint|help|what are you building)\b", re.I),
+    help_text="E.T. NEED THREE THINGS. SPEAK AND SPELL. UMBRELLA. RECORD PLAYER. BRING THEM. ONE AT A TIME.",
     reveal="PHONE. HOME. E.T. PHONE HOME. THEY COME. YOUR FLAG IS {flag}. AGAIN. YOUR FLAG IS {flag}. "
            "BE GOOD.",
     flag="I WILL BE RIGHT HERE", fanfare=True)
@@ -1016,8 +1030,8 @@ WAR_TURN_CLIP = "wopr-war-turn"
 
 # Arcade mode: said inside any game, these drop the caller back to the menu to try another game.
 MENU_RETURN_RE = re.compile(
-    r"\b(main menu|back to (the )?menu|go back|next game|another game|other games?|"
-    r"start over|something else|play something else)\b", re.I)
+    r"\b(main menu|in menu|the menu|menu|back to (the )?menu|go back|next game|another game|other games?|"
+    r"start over|something else|play something else|operator)\b", re.I)
 
 
 def match_experience(text: str) -> "Experience | None":
@@ -2397,6 +2411,16 @@ async def conversation(sess: CallSession) -> None:
                     await sess.play(war_clip, "war_turn")
                     if sess.interrupted:
                         continue
+            if quest is not None and quest.help_re is not None and quest.help_text and quest.help_re.search(text):
+                # The caller asked what to do: a fixed in-character answer, never the model.
+                sess.history.append({"role": "user", "content": text})
+                sess.history.append({"role": "assistant", "content": quest.help_text})
+                del sess.history[:-HISTORY_MAX_TURNS]
+                sess.record_turn(text, quest.help_text, "help")
+                sess.set_state(CallState.SPEAKING)
+                await sess.play(await tts_frames(quest.help_text, sess.log, voice=sess.experience.voice,
+                                                 speed=sess.experience.speed, pitch=sess.experience.pitch), "help")
+                continue
             if is_operator and SECRET_WORD_ASK_RE.search(text):
                 # Clues come from the ordered list, never from the model.
                 if sess.clue_idx < len(OPERATOR_CLUES):

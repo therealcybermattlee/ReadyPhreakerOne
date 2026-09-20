@@ -1497,3 +1497,18 @@ class OperatorTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+
+class QuestHelpTests(unittest.TestCase):
+    def test_help_questions_get_fixed_answers(self):
+        self.assertTrue(w.ROBOCOP_QUEST.help_re.search("What are your prime directives?"))
+        self.assertTrue(w.SKYNET_QUEST.help_re.search("how do I prove I'm resistance"))
+        self.assertTrue(w.ET_QUEST.help_re.search("what do you need, E.T.?"))
+        for q in (w.SKYNET_QUEST, w.ROBOCOP_QUEST, w.ET_QUEST):
+            self.assertTrue(q.help_text)
+            self.assertIsNone(q.help_re.search("serve the public trust"))   # an answer is not a question
+        self.assertIsNone(w.WOPR_QUEST.help_re)
+
+    def test_menu_word_alone_returns(self):
+        for t in ["in menu", "the menu please", "menu", "main menu", "operator"]:
+            self.assertTrue(w.MENU_RETURN_RE.search(t), t)
+
