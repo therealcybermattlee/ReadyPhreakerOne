@@ -1455,7 +1455,8 @@ class OperatorTests(unittest.TestCase):
             self.assertTrue(w.LIST_OPTIONS_RE.search(t), t)
         self.assertIsNone(w.SECRET_WORD_ASK_RE.search("connect me to robocop"))
         self.assertGreaterEqual(len(w.OPERATOR_CLUES), 3)
-        for c in w.OPERATOR_CLUES + w.OPERATOR_NUDGES + (w.OPERATOR_FALLBACK, w.OPERATOR_BRUSHOFF, w.OPERATOR_NO_SUCH):
+        for c in w.OPERATOR_CLUES + w.OPERATOR_NUDGES + (w.OPERATOR_FALLBACK, w.OPERATOR_BRUSHOFF, w.OPERATOR_NO_SUCH,
+                                                          w.OPERATOR_OPENING, w.OPERATOR_RETURN_LINE, w.OPERATOR_MENU_ACK):
             self.assertIsNone(w.PEEWEE_EXPERIENCE.wake.search(c), f"content leaks the secret word: {c}")
 
     def test_availability_and_routing(self):

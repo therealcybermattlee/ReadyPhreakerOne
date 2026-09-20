@@ -939,6 +939,7 @@ OPERATOR_NUDGES = (
 OPERATOR_FALLBACK = "ONE MOMENT, HON, THE BOARD IS LIT UP. SAY A NAME AND I WILL CONNECT YOU."
 OPERATOR_BRUSHOFF = "I CANNOT GIVE OUT THAT INFORMATION, HON. ASK ME FOR A CLUE INSTEAD."
 OPERATOR_NO_SUCH = "THERE IS NO SUCH EXTENSION ON THIS BOARD, HON. I ONLY CONNECT CALLS."
+OPERATOR_OPENING = "OPERATOR HERE, HON. WHO CAN I CONNECT YOU TO?"     # her first words after Tom's greeting
 OPERATOR_RETURN_LINE = "OPERATOR. BACK ON THE BOARD, HON. WHO IS NEXT?"
 OPERATOR_MENU_ACK = "YOU ARE WITH THE OPERATOR, HON. SAY A NAME, OR ASK WHO IS ON THE LINE."
 OPERATOR_VOICE_DEFAULT = "en-us+f3"
@@ -2175,10 +2176,13 @@ async def conversation(sess: CallSession) -> None:
             if not sess.greeted:
                 sess.greeted = True
                 if MENU_GREETING_FRAMES:
-                    await sess.play(MENU_GREETING_FRAMES, "operator_greeting")
+                    await sess.play(MENU_GREETING_FRAMES, "operator_greeting_recorded")   # Tom's recording, once
                 else:
                     await sess.play(await tts_frames(cfg.menu_greeting, sess.log, voice=cfg.operator_voice,
-                                                     speed=cfg.operator_speed, pitch=cfg.operator_pitch), "operator_greeting")
+                                                     speed=cfg.operator_speed, pitch=cfg.operator_pitch), "operator_greeting_tts")
+                # …then she takes over in her own voice, so the hand-off to the live Operator is audible
+                await sess.play(await tts_frames(OPERATOR_OPENING, sess.log, voice=cfg.operator_voice,
+                                                 speed=cfg.operator_speed, pitch=cfg.operator_pitch), "operator_opening")
             else:
                 await sess.play(await tts_frames(OPERATOR_RETURN_LINE, sess.log, voice=cfg.operator_voice,
                                                  speed=cfg.operator_speed, pitch=cfg.operator_pitch), "operator_return")
