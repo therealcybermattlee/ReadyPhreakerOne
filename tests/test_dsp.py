@@ -59,7 +59,7 @@ class GoertzelTests(unittest.TestCase):
     def test_vectorized_matches_reference(self):
         x = tone(2600)
         ref = w.goertzel_energy(x, 26)
-        vec = float(w.window_energies(x)[1])
+        vec = float(w.window_energies(x)[w._BINS_K.index(26)])
         self.assertAlmostEqual(ref / vec, 1.0, places=6)
 
     def test_on_bin_tone_has_high_ratio_and_half_purity(self):
@@ -68,14 +68,15 @@ class GoertzelTests(unittest.TestCase):
         self.assertGreater(e26, w.MIN_BIN_ENERGY)
         self.assertAlmostEqual(purity, 0.5, places=2)
 
-    def test_neighbour_tones_fail_ratio(self):
-        for hz in (2500, 2700):
+    def test_guard_tones_fail_ratio(self):
+        # just outside the 2300–2900 band: the guard bins catch them
+        for hz in (2100, 2200, 3000, 3100):
             ratio, _, _ = w.window_ratio(tone(hz))
-            self.assertLess(ratio, w.RATIO_THRESHOLD)
+            self.assertLess(ratio, w.RATIO_THRESHOLD, f"{hz} Hz ratio={ratio:.2f}")
 
     def test_drift_within_spec_passes(self):
-        # ±30 Hz required; verify a bit beyond at various phases
-        for hz in (2570, 2585, 2600, 2615, 2630, 2640):
+        # the whole 2300–2900 band passes, at various phases (a real whistle wanders)
+        for hz in (2320, 2450, 2570, 2585, 2600, 2615, 2630, 2640, 2750, 2880):
             for ph in (0.0, 1.0, 2.5):
                 ok, ratio, e26, purity = w.window_passes(tone(hz, phase=ph))
                 self.assertTrue(ok, f"{hz} Hz phase {ph}: ratio={ratio:.2f} purity={purity:.2f}")
@@ -1230,3 +1231,92 @@ class ClipConventionTests(unittest.TestCase):
         seg = len(pcm) // 4
         hz = [w.estimate_peak_hz(pcm[i * seg:(i + 1) * seg], lo=800.0, hi=2000.0) for i in range(3)]
         self.assertTrue(hz[0] < hz[1] < hz[2], hz)
+
+
+class SpeechBargeInTests(unittest.TestCase):
+    """Talking over a clip stops it; sidetone does not. The interrupting words become the utterance."""
+
+    def _sess(self):
+        class _W:
+            def get_extra_info(self, k): return None
+            def write(self, b): pass
+            async def drain(self): pass
+            def close(self): pass
+        return w.CallSession(b"\xbb" * 16, None, _W(), w.Config())
+
+    def _noise(self, rng, level, n):
+        return [(rng.standard_normal(80) * level).astype("<i2") for _ in range(n)]
+
+    def test_sidetone_never_fires_and_speech_does(self):
+        rng = np.random.default_rng(11)
+        det = w.BargeDetector()
+        # measured sidetone of the loudest clip: ~500 typical, spikes to ~1400
+        for win in self._noise(rng, 500, 200) + self._noise(rng, 1400, 40) + self._noise(rng, 500, 100):
+            self.assertFalse(det.update(win))
+        # the caller talking over it (~3000 RMS) for 300 ms
+        fired = [det.update(win) for win in self._noise(rng, 3000, w.BARGE_HOLD_WINDOWS + 2)]
+        self.assertEqual(sum(fired), 1)
+
+    def test_short_shout_does_not_fire(self):
+        rng = np.random.default_rng(12)
+        det = w.BargeDetector()
+        for win in self._noise(rng, 400, 50):
+            det.update(win)
+        self.assertFalse(any(det.update(win) for win in self._noise(rng, 3000, 15)))   # 150 ms
+
+    def test_bargein_stops_playback_and_seeds_the_utterance(self):
+        import asyncio
+
+        async def scenario():
+            sess = self._sess()
+            sess.set_state(w.CallState.SPEAKING)
+            frames = [b"\x00" * w.FRAME_BYTES] * 200
+            await sess.enqueue(frames)
+            self.assertEqual(sess.outbound_q.qsize(), 200)
+            sess.bargeable = True
+            rng = np.random.default_rng(13)
+            for win in self._noise(rng, 3000, w.BARGE_HOLD_WINDOWS + 1):
+                sess.process_inbound_window(win)
+            self.assertTrue(sess.interrupted)
+            self.assertEqual(sess.outbound_q.qsize(), 0, "queued playback drained")
+            self.assertIs(sess.state, w.CallState.CAPTURING)
+            self.assertTrue(sess.vad.in_speech, "VAD seeded mid-utterance")
+            self.assertGreater(len(sess.vad.buf), 0)
+            # a queued play() is skipped while the barge-in is pending
+            await sess.play(frames, "would_be_skipped")
+            self.assertEqual(sess.outbound_q.qsize(), 0)
+
+        asyncio.run(scenario())
+
+    def test_short_plays_and_no_barge_plays_are_not_interruptible(self):
+        import asyncio
+
+        async def scenario():
+            sess = self._sess()
+            sess.set_state(w.CallState.SPEAKING)
+            sess.drain()
+
+            async def drainer():
+                while True:
+                    await asyncio.sleep(0.001)
+                    while not sess.outbound_q.empty():
+                        sess.outbound_q.get_nowait(); sess.outbound_q.task_done()
+            t = asyncio.create_task(drainer())
+            seen = []
+            orig_reset = sess.barge.reset
+            sess.barge.reset = lambda: (seen.append(True), orig_reset())[1]
+            await sess.play([b"\x00" * w.FRAME_BYTES] * 10, "wink")        # < 1 s: never bargeable
+            self.assertEqual(seen, [])
+            sess.no_barge = True
+            await sess.play([b"\x00" * w.FRAME_BYTES] * 100, "seize")     # protected
+            self.assertEqual(seen, [])
+            sess.no_barge = False
+            await sess.play([b"\x00" * w.FRAME_BYTES] * 100, "clip")      # bargeable
+            self.assertEqual(seen, [True])
+            t.cancel()
+
+        asyncio.run(scenario())
+
+    def test_terminator_summons_skynet_and_names_switch_games(self):
+        for t in ["skynet", "sky net", "terminator", "sarah connor"]:
+            self.assertEqual(w.match_experience(t).key, "skynet", t)

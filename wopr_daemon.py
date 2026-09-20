@@ -52,8 +52,15 @@ WINDOW_BYTES = WINDOW_SAMPLES * 2
 
 # --- 2600 Hz detector -----------------------------------------------------------------------
 GOERTZEL_N = 80               # samples per Goertzel window → 100 Hz bins at 8 kHz
-BINS_HZ = (2500, 2600, 2700)  # k = 25, 26, 27: exactly on-bin, no leakage penalty at nominal
-RATIO_THRESHOLD = 0.35        # E2600 / (E2500 + E2700): ratio-based so level doesn't matter
+# The accepted whistle band is 2300–2900 Hz (bins 23..29), guarded by 2100/2200 below and 3000/3100
+# above. Widened 2026-09-20 from the single 2600 bin: a real caller's whistle carried two tones at
+# once (~2010 and ~2580 Hz) with the balance shifting between attempts; one attempt at 2600 fired,
+# one dominated by the lower tone never did. The band catches both while speech still fails purity.
+BINS_HZ = (2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 2900, 3000, 3100)
+_GUARD_IDX = (0, 1, 9, 10)    # 2100, 2200, 3000, 3100
+_BAND_IDX = (2, 3, 4, 5, 6, 7, 8)   # 2300 … 2900
+WHISTLE_BAND_HZ = (2300, 2900)
+RATIO_THRESHOLD = 0.35        # E_band / E_guard: ratio-based so level doesn't matter
 MIN_BIN_ENERGY = 1.0e8        # absolute floor on E2600 (int16² units); rejects silence/hiss.
                               # Measured 2026-09-04 on the harness corpus: speech windows that slip
                               # past ratio+purity bottom out at 3.8e7; the quietest passing window of
@@ -70,6 +77,19 @@ REARM_WINDOWS = 10            # consecutive non-passing windows required after a
                               # detector may fire again (so one long whistle fires once)
 ECHO_GUARD_WINDOWS = 20       # outbound windows (200 ms) whose "pass" verdict masks inbound
                               # windows — sidetone self-trigger guard that keeps barge-in live
+
+# --- Speech barge-in over playback -------------------------------------------------------------
+# While a clip or a reply plays, the caller can talk over it to stop it. Sidetone (the earpiece
+# bleeding into the mouthpiece) must not count: measured 2026-09-20 on a real call, the loudest
+# clip's sidetone peaked at ~1400 RMS per 100 ms while the caller talking over a clip hit
+# 2000–11000. So: sustained (300 ms) speech above both an absolute floor and 3× the running
+# sidetone level. The interrupting words are kept and fed to the game as the next utterance.
+BARGE_RMS_MIN = 1800.0        # int16 RMS a window must exceed (above any measured sidetone)
+BARGE_RATIO = 3.0             # … and exceed the running sidetone floor by this factor
+BARGE_HOLD_WINDOWS = 30       # 300 ms of loud windows (with a miss budget) before we cut playback
+BARGE_MISS_BUDGET = 6         # quiet windows tolerated inside the run (speech has gaps)
+BARGE_MIN_FRAMES = 50         # only plays of ≥ 1 s are interruptible (winks, beeps are not)
+BARGE_BUFFER_WINDOWS = 60     # 600 ms of caller audio kept to seed the interrupting utterance
 
 # --- Wink tone ------------------------------------------------------------------------------
 WINK_HZ = 480
@@ -181,7 +201,7 @@ def _dft_matrix(bins: tuple[int, ...], n: int) -> np.ndarray:
     return np.stack([np.exp(-2j * math.pi * k * t / n) for k in bins], axis=1)  # (n, len(bins))
 
 
-_BINS_K = tuple(hz_to_bin(h) for h in BINS_HZ)          # (25, 26, 27)
+_BINS_K = tuple(hz_to_bin(h) for h in BINS_HZ)          # (21 … 31)
 _E_MATRIX = _dft_matrix(_BINS_K, GOERTZEL_N)
 
 
@@ -192,16 +212,17 @@ def window_energies(win: np.ndarray, matrix: np.ndarray = _E_MATRIX) -> np.ndarr
 
 
 def window_ratio(win: np.ndarray) -> tuple[float, float, float]:
-    """Return (ratio, e2600, purity) for one 80-sample int16 window.
+    """Return (ratio, e_band, purity) for one 80-sample int16 window.
 
-    ratio  = E2600 / (E2500 + E2700)   — the user-specified adjacent-bin test
-    purity = E2600 / (N · Σx²)         — fraction of window energy at 2600 Hz (Parseval)
+    ratio  = E_band / E_guard          — energy in 2300–2900 Hz vs the guard bins just outside it
+    purity = E_band / (N · Σx²)        — fraction of window energy inside the band (Parseval)
     """
     e = window_energies(win)
-    e25, e26, e27 = float(e[0]), float(e[1]), float(e[2])
-    ratio = e26 / (e25 + e27 + 1e-9)
+    e_band = float(sum(e[i] for i in _BAND_IDX))
+    e_guard = float(sum(e[i] for i in _GUARD_IDX))
+    ratio = e_band / (e_guard + 1e-9)
     total = GOERTZEL_N * float(np.sum(win[:GOERTZEL_N].astype(np.float64) ** 2)) + 1e-9
-    return ratio, e26, e26 / total
+    return ratio, e_band, e_band / total
 
 
 def window_passes(win: np.ndarray) -> tuple[bool, float, float, float]:
@@ -718,7 +739,7 @@ WOPR_EXPERIENCE = Experience(
     quest=WOPR_QUEST)
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
-    wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b", re.I),
+    wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b|\bsky\s?net\b|\bterminator\b", re.I),
     voice="en-us+m1", speed=108, pitch=6,      # T-800: deepest, slowest, most deliberate
     quest=SKYNET_QUEST)
 ROBOCOP_EXPERIENCE = Experience(
@@ -1250,6 +1271,45 @@ class ToneDetector:
 
 
 @dataclasses.dataclass
+class BargeDetector:
+    """Speech-over-playback detector: fires after BARGE_HOLD_WINDOWS of windows louder than both
+    BARGE_RMS_MIN and BARGE_RATIO × the running sidetone floor. Keeps the last 600 ms of audio."""
+    floor: float = 0.0
+    seen: int = 0
+    run: int = 0
+    misses: int = 0
+    last_rms: float = 0.0
+    buf: collections.deque = dataclasses.field(
+        default_factory=lambda: collections.deque(maxlen=BARGE_BUFFER_WINDOWS))
+
+    def reset(self) -> None:
+        self.__init__()
+
+    @property
+    def threshold(self) -> float:
+        return max(BARGE_RMS_MIN, self.floor * BARGE_RATIO)
+
+    def update(self, win: np.ndarray) -> bool:
+        r = rms(win)
+        self.last_rms = r
+        self.buf.append(win.astype("<i2").tobytes())
+        self.seen += 1
+        loud = r > self.threshold
+        if not loud:
+            self.floor = r if self.seen == 1 else self.floor * 0.95 + r * 0.05
+        if loud:
+            self.run += 1
+            if self.run >= BARGE_HOLD_WINDOWS:
+                self.run = self.misses = 0
+                return True
+        elif self.run > 0 and self.misses < BARGE_MISS_BUDGET:
+            self.misses += 1
+        else:
+            self.run = self.misses = 0
+        return False
+
+
+@dataclasses.dataclass
 class VadState:
     noise_floor: float = 0.0
     init_windows: int = 0
@@ -1430,6 +1490,12 @@ class CallSession:
         self.detector = ToneDetector()
         self.echo_ring: collections.deque[bool] = collections.deque(maxlen=ECHO_GUARD_WINDOWS)
         self.vad = VadState()
+        self.barge = BargeDetector()            # speech-over-playback detector (see BARGE_*)
+        self.bargeable = False                  # the current play() may be interrupted by speech
+        self.no_barge = False                   # set around plays that must finish (seize, goodbye)
+        self.interrupted = False                # speech barge-in happened; skip queued plays
+        self.seizing = False                    # inside the whistle → wink → kerchunk sequence
+        self.last_conv_key: str | None = None   # per-game state (history, chess) resets on change
         self.utterance = b""
         self.history: list[dict] = []
         self.detected_evt = asyncio.Event()
@@ -1609,7 +1675,10 @@ class CallSession:
             if self.t_first_detect_ms is None:
                 self.t_first_detect_ms = self.elapsed_ms()
             self.on_whistle()
-        if self.state is CallState.CAPTURING and not masked:
+        if self.state is CallState.SPEAKING and self.bargeable and not masked:
+            if self.barge.update(win):
+                self.speech_bargein()
+        elif self.state is CallState.CAPTURING and not masked:
             utt = self.vad.update(win)
             if utt is not None:
                 self.utterance = utt
@@ -1627,9 +1696,29 @@ class CallSession:
                     self.idle_utterance = utt
                     self.idle_utt_evt.set()
 
+    def speech_bargein(self) -> None:
+        """The caller talked over a clip: stop playback now, keep what they said as the utterance
+        the game will process next (the VAD is seeded mid-speech), and let play() return."""
+        self.log.info(kv(event="bargein_speech", rms=round(self.barge.last_rms), floor=round(self.barge.floor)))
+        self.bargeable = False
+        self.interrupted = True
+        self.playback_gen += 1                      # the writer drops any frame of the old generation
+        self.drain()
+        v = self.vad
+        v.reset()
+        v.init_windows = VAD_FLOOR_INIT_MS // 10     # skip floor init: the caller is already talking
+        v.noise_floor = 60.0                         # playback has stopped; a quiet handset floor
+        v.in_speech = True
+        v.buf = bytearray(b"".join(self.barge.buf))
+        v.utterance_windows = len(self.barge.buf)
+        v.silence_windows = 0
+        self.set_state(CallState.CAPTURING)
+
     def on_whistle(self) -> None:
-        """2600 Hz heard. The first whistle seizes the trunk (the line was dead until now); every
-        whistle, first or later, drops the caller at the menu. brain_task plays the wink."""
+        """A whistle in the band. The first whistle seizes the trunk (the line was dead until now);
+        every whistle, first or later, drops the caller at the menu. brain_task plays the wink."""
+        if self.seizing:
+            return                                   # already answering a whistle; ignore the tail
         if not self.seized:
             self.seized = True
             self.log.info(kv(event="seize", t_ms=round(self.elapsed_ms())))
@@ -1656,6 +1745,8 @@ class CallSession:
     async def enqueue(self, frames: list[bytes]) -> None:
         gen = self.playback_gen
         for f in frames:
+            if self.interrupted:
+                return
             await self.outbound_q.put((gen, f))
 
     def drain(self) -> int:
@@ -1669,10 +1760,20 @@ class CallSession:
             n += 1
 
     async def play(self, frames: list[bytes], what: str) -> None:
+        if self.interrupted:
+            self.log.info(kv(event="play_skipped", what=what))   # a speech barge-in is pending
+            return
         self.log.info(kv(event="play_start", what=what, frames=len(frames), ms=len(frames) * 20))
-        await self.enqueue(frames)
-        await self.outbound_q.join()
-        self.log.info(kv(event="play_end", what=what))
+        self.bargeable = (len(frames) >= BARGE_MIN_FRAMES and not self.no_barge
+                          and self.state is CallState.SPEAKING)
+        if self.bargeable:
+            self.barge.reset()
+        try:
+            await self.enqueue(frames)
+            await self.outbound_q.join()
+        finally:
+            self.bargeable = False
+        self.log.info(kv(event="play_end", what=what, interrupted=int(self.interrupted)))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -1762,6 +1863,7 @@ async def run_cutscene(sess: CallSession) -> None:
     the menu (arcade default) or end the call (Cutscene.end_call, used by the goodbye sign-off)."""
     cfg = sess.cfg
     cs = sess.experience.cutscene
+    sess.no_barge = bool(cs.end_call)      # the goodbye sign-off always finishes and hangs up
     sess.note_game(sess.experience.key, reached=True, clip=True)
     sess.log.info(kv(event="experience", key=sess.experience.key, archetype="cutscene"))
     intro = INTRO_FRAMES.get(sess.experience.key)
@@ -1805,6 +1907,9 @@ async def run_cutscene(sess: CallSession) -> None:
                 gframes = None
         if gframes:
             await sess.play(gframes, "goodbye")
+    if sess.interrupted:
+        sess.log.info(kv(event="cutscene_interrupted", key=sess.experience.key))
+        return                    # the caller talked over it: back to the menu, not completed
     sess.note_game(sess.experience.key, completed=True)   # played through to the end
     if cs.end_call:
         await end_call(sess)      # explicit exit (the goodbye sign-off)
@@ -1814,6 +1919,13 @@ async def run_cutscene(sess: CallSession) -> None:
 async def conversation(sess: CallSession) -> None:
     """One session: wink, greeting, then capture → STT → LLM → TTS → play, until cancelled."""
     cfg = sess.cfg
+    if sess.experience.key != sess.last_conv_key:
+        # A different character than last time (arcade switch): its chat starts fresh.
+        sess.history.clear()
+        sess.in_chess = False
+        sess.chess_idx = 0
+        sess.chess_offered = False
+        sess.last_conv_key = sess.experience.key
     sess.set_state(CallState.SPEAKING)
     if sess.experience.cutscene is not None:
         # Cutscene archetype: play-and-close (clip -> optional message -> goodbye -> end call).
@@ -1871,8 +1983,11 @@ async def conversation(sess: CallSession) -> None:
     sess.sync_quest()
     while True:
         sess.set_state(CallState.CAPTURING)
-        sess.vad.reset()
-        sess.utterance_evt.clear()
+        if sess.interrupted:
+            sess.interrupted = False     # speech barge-in: the VAD is already mid-utterance; keep it
+        else:
+            sess.vad.reset()
+            sess.utterance_evt.clear()
         sess.log.info(kv(event="capture_start"))
         await sess.utterance_evt.wait()
         utt = sess.utterance
@@ -1896,6 +2011,14 @@ async def conversation(sess: CallSession) -> None:
                 except PipelineError:
                     pass
                 return   # brain_task -> ARMED -> the menu; earned flags persist for the call
+            target = match_experience(text)
+            if target is not None and target.key != sess.experience.key:
+                # Arcade: another character's name (or operator / goodbye) said mid-game switches
+                # straight to it — the flag tally promises "say another name".
+                sess.log.info(kv(event="switch", frm=sess.experience.key, to=target.key, text=text))
+                sess.experience = target
+                sess.detected_evt.set()
+                return
             if is_wopr and MOVIE_BEATS["global_thermonuclear_war"].search(text):
                 sess.played_gtw = True
             # --- move-by-move chess: caller-paced, intercepts before the flag/LLM path ---
@@ -1994,24 +2117,27 @@ async def conversation(sess: CallSession) -> None:
                     # LLM round trip (the generic form of WOPR's Joshua line).
                     obj = next((o for o in quest.objectives if o.name == beat), None)
                     hit_clip = clip_for(f"{sess.experience.key}-{beat}") if obj is not None else None
-                    if obj is not None and (obj.response or hit_clip):
-                        line = obj.response or f"[{obj.label or beat}]"
-                        sess.history.append({"role": "user", "content": text})
-                        sess.history.append({"role": "assistant", "content": line})
-                        del sess.history[:-HISTORY_MAX_TURNS]
-                        sess.record_turn(text, line, "objective")
+                    if hit_clip:
+                        # the objective's sound plays first; the character still answers after it
                         sess.set_state(CallState.SPEAKING)
-                        if hit_clip:
-                            await sess.play(hit_clip, f"objective_clip:{beat}")
-                        if obj.response:
-                            try:
-                                await sess.play(await tts_frames(obj.response, sess.log,
-                                                                 voice=sess.experience.voice,
-                                                                 speed=sess.experience.speed,
-                                                                 pitch=sess.experience.pitch), "objective")
-                            except PipelineError as e:
-                                sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                        await sess.play(hit_clip, f"objective_clip:{beat}")
+                        if sess.interrupted:
+                            continue
+                    if obj is not None and obj.response:
+                        sess.history.append({"role": "user", "content": text})
+                        sess.history.append({"role": "assistant", "content": obj.response})
+                        del sess.history[:-HISTORY_MAX_TURNS]
+                        sess.record_turn(text, obj.response, "objective")
+                        try:
+                            sess.set_state(CallState.SPEAKING)
+                            await sess.play(await tts_frames(obj.response, sess.log,
+                                                             voice=sess.experience.voice,
+                                                             speed=sess.experience.speed,
+                                                             pitch=sess.experience.pitch), "objective")
+                        except PipelineError as e:
+                            sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                         continue
+                    # no canned response: fall through to the LLM so the character reacts in voice
             if cfg.stub_llm:
                 reply = stub_reply()
                 sess.log.info(kv(event="llm", ms=0.0, stub=1, chars=len(reply)))
@@ -2093,12 +2219,25 @@ async def brain_task(sess: CallSession) -> None:
             sess.chess_offered = False
             sess.log.info(kv(event="bargein", dropped_frames=dropped, gen=sess.playback_gen))
         if sess.whistle_pending:
-            # The whistle: wink ("trunk seized"), then the menu loop takes over in ARMED. Earned flags
-            # persist for the call; a game in progress was abandoned by the barge-in above.
+            # The whistle: an immediate wink says "heard you, stop whistling"; once the whistle has
+            # actually stopped (the detector re-arms after 100 ms of no tone) the kerchunk plays,
+            # then the menu loop takes over in ARMED. Earned flags persist for the call; a game in
+            # progress was abandoned by the barge-in above.
             sess.whistle_pending = False
+            sess.seizing = True
+            sess.no_barge = True
             sess.experience = GREETER_EXPERIENCE
             sess.set_state(CallState.SPEAKING)
-            await sess.play(clip_for("seize") or wink_frames(), "seize_wink")   # trunk seized
+            try:
+                await sess.play(wink_frames(), "seize_ack")
+                t0 = time.monotonic()
+                while not sess.detector.armed and time.monotonic() - t0 < 3.0:
+                    await asyncio.sleep(0.02)
+                sess.log.info(kv(event="whistle_over", waited_ms=round((time.monotonic() - t0) * 1000)))
+                await sess.play(clip_for("seize") or wink_frames(), "seize_kerchunk")
+            finally:
+                sess.no_barge = False
+                sess.seizing = False
             sess.set_state(CallState.ARMED)
             continue
         conv = asyncio.create_task(conversation(sess), name=f"conv-{sess.call_hex}-{sess.playback_gen}")
