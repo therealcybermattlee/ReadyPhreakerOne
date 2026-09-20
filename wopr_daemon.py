@@ -85,7 +85,9 @@ ECHO_GUARD_WINDOWS = 20       # outbound windows (200 ms) whose "pass" verdict m
 # 2000–11000. So: sustained (300 ms) speech above both an absolute floor and 3× the running
 # sidetone level. The interrupting words are kept and fed to the game as the next utterance.
 BARGE_RMS_MIN = 1800.0        # int16 RMS a window must exceed (above any measured sidetone)
-BARGE_RATIO = 3.0             # … and exceed the running sidetone floor by this factor
+BARGE_RATIO = 2.0             # … and exceed the running sidetone floor by this factor (the
+                              # sidetone-aware term below is the primary guard; 2× keeps a shout over
+                              # a loud clip reachable)
 BARGE_HOLD_WINDOWS = 30       # 300 ms of loud windows (with a miss budget) before we cut playback
 BARGE_MISS_BUDGET = 6         # quiet windows tolerated inside the run (speech has gaps)
 BARGE_MIN_FRAMES = 50         # only plays of ≥ 1 s are interruptible (winks, beeps are not)
