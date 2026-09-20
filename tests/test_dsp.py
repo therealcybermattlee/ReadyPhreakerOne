@@ -1528,3 +1528,24 @@ class OrderedFeedbackTests(unittest.TestCase):
         self.assertIsNone(q.update("how are you today"))     # unrelated: no flag
         self.assertIsNone(q.out_of_order)
 
+
+class OperatorNearMissTests(unittest.TestCase):
+    def test_mishears_from_real_calls_reach_the_game(self):
+        for t in ["Guy net.", "sky knit", "Thera Connor", "sera conner", "terra connor"]:
+            self.assertEqual(w.match_experience(t).key, "skynet", t)
+
+    def test_fuzzy_name_match_is_operator_only_and_conservative(self):
+        self.assertEqual(w.fuzzy_experience("Thera Connor").key, "skynet")
+        self.assertEqual(w.fuzzy_experience("robo cup").key, "robocop")
+        self.assertEqual(w.fuzzy_experience("Tony Hock").key, "tonyhawk")
+        self.assertIsNone(w.fuzzy_experience("what is the weather like today"))   # sentences never match
+        self.assertIsNone(w.fuzzy_experience("hello"))
+        self.assertIsNone(w.fuzzy_experience(""))
+
+    def test_operator_never_says_hon(self):
+        for c in (w.OPERATOR_PERSONA,) + w.OPERATOR_CLUES + w.OPERATOR_NUDGES + (
+                w.OPERATOR_FALLBACK, w.OPERATOR_BRUSHOFF, w.OPERATOR_NO_SUCH, w.OPERATOR_OPENING,
+                w.OPERATOR_RETURN_LINE, w.OPERATOR_MENU_ACK, w.OPERATOR_CLUES_EXHAUSTED):
+            self.assertNotRegex(c, r"\bHON\b", c)
+        self.assertIn("Sarah Connor", w.OPERATOR_STT_PROMPT)
+

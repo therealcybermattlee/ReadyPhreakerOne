@@ -779,7 +779,8 @@ WOPR_EXPERIENCE = Experience(
     quest=WOPR_QUEST)
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
-    wake=re.compile(r"\b(sara?h?|sarah)\s+conn?or\b|\bjohn\s+conn?or\b|\bsky\s?(net|nut|and head|net)\b|\bskynet\b|\bterminator\b", re.I),
+    wake=re.compile(r"\b(sara?h?|sarah|thera|sera|terra|tara|sarra)\s+conn?[oe]r\b|\bjohn\s+conn?[oe]r\b|"
+                    r"\b(sky|skye|guy|kai|sky-)\s?(net|nut|and head|knit)\b|\bskynet\b|\bterminator\b", re.I),
     voice="en-us+m1", speed=108, pitch=6,      # T-800: deepest, slowest, most deliberate
     directory=DirectoryEntry("SKYNET", ("Sarah Connor", "Skynet", "Terminator"),
                              "a terminator looking for Sarah Connor"),
@@ -926,35 +927,37 @@ OPERATOR_PERSONA = (
     "You are the OPERATOR on a 1970s long-distance switchboard at the GrrCon payphone. The caller has "
     "just seized your trunk with a whistle. Rules you never break:\n"
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
-    "- At most two short sentences, under 20 words total. Brisk, dry, a little world-weary. Call them "
-    "HON or CALLER.\n"
+    "- At most two short sentences, under 20 words total. Brisk, dry, a little world-weary. Address "
+    "the caller as CALLER, or not at all. Never use pet names.\n"
     "- You know ONLY your DIRECTORY below. Connect callers by telling them what to say. Never invent "
     "an extension, a person, a game, or a place that is not in the directory.\n"
     "- When asked what you know, what is available, who is on the line, or what to do: name TWO "
     "directory entries and exactly what to say to reach each, then stop. Offer more if they ask again.\n"
     "- Anything outside the directory gets a switchboard brush-off ('THAT NUMBER IS NOT IN SERVICE', "
-    "'I ONLY CONNECT CALLS, HON') and an offer to connect them.\n"
+    "'I ONLY CONNECT CALLS, CALLER') and an offer to connect them.\n"
     "- A SECRET WORD exists. Never say it or guess at it. If asked, tell them to ask you for a clue.\n"
     "- Never break character. Never say you are an AI, a computer, or a program. Do not repeat your "
     "greeting.\n"
 )
 OPERATOR_CLUES = (
-    "HERE IS YOUR FIRST CLUE, HON. IT IS THE NAME OF THE PLACE YOU ARE STANDING IN.",
+    "HERE IS YOUR FIRST CLUE. IT IS THE NAME OF THE PLACE YOU ARE STANDING IN.",
     "SECOND CLUE. SAY IT LIKE A BEAR WOULD, WITH A GROWL UP FRONT.",
     "LAST CLUE. IT IS ON YOUR BADGE. TWO SYLLABLES. GRR, THEN THE CON.",
 )
-OPERATOR_CLUES_EXHAUSTED = "THAT IS ALL THE CLUES I HAVE, HON. GROWL IT AT ME AND SEE WHAT HAPPENS."
+OPERATOR_CLUES_EXHAUSTED = "THAT IS ALL THE CLUES I HAVE. GROWL IT AT ME AND SEE WHAT HAPPENS."
 OPERATOR_NUDGES = (
-    "OPERATOR. STILL HOLDING, HON? TELL ME WHO YOU WANT.",
+    "OPERATOR. STILL HOLDING? TELL ME WHO YOU WANT.",
     "THIS IS THE OPERATOR. SAY A NAME, OR ASK ME WHO IS ON THE LINE.",
     "ARE YOU STILL THERE, CALLER? I CAN CONNECT YOU, OR SAY GOODBYE TO HANG UP.",
 )
-OPERATOR_FALLBACK = "ONE MOMENT, HON, THE BOARD IS LIT UP. SAY A NAME AND I WILL CONNECT YOU."
-OPERATOR_BRUSHOFF = "I CANNOT GIVE OUT THAT INFORMATION, HON. ASK ME FOR A CLUE INSTEAD."
-OPERATOR_NO_SUCH = "THERE IS NO SUCH EXTENSION ON THIS BOARD, HON. I ONLY CONNECT CALLS."
-OPERATOR_OPENING = "OPERATOR HERE, HON. WHO CAN I CONNECT YOU TO?"     # her first words after Tom's greeting
-OPERATOR_RETURN_LINE = "OPERATOR. BACK ON THE BOARD, HON. WHO IS NEXT?"
-OPERATOR_MENU_ACK = "YOU ARE WITH THE OPERATOR, HON. SAY A NAME, OR ASK WHO IS ON THE LINE."
+OPERATOR_FALLBACK = "ONE MOMENT, THE BOARD IS LIT UP. SAY A NAME AND I WILL CONNECT YOU."
+OPERATOR_BRUSHOFF = "I CANNOT GIVE OUT THAT INFORMATION. ASK ME FOR A CLUE INSTEAD."
+OPERATOR_NO_SUCH = "THERE IS NO SUCH EXTENSION ON THIS BOARD. I ONLY CONNECT CALLS."
+OPERATOR_OPENING = "OPERATOR HERE. WHO CAN I CONNECT YOU TO?"     # her first words after Tom's greeting
+OPERATOR_RETURN_LINE = "OPERATOR. BACK ON THE BOARD. WHO IS NEXT?"
+OPERATOR_MENU_ACK = "YOU ARE WITH THE OPERATOR. SAY A NAME, OR ASK WHO IS ON THE LINE."
+OPERATOR_STT_PROMPT = ("A caller talking to a telephone switchboard operator. The caller may say a name: "
+                       + WAKE_PROMPT_DEFAULT + " Main menu. Goodbye. The secret word. A clue.")
 OPERATOR_VOICE_DEFAULT = "en-us+f3"
 OPERATOR_SPEED_DEFAULT = 170              # a switchboard operator talks fast
 OPERATOR_PITCH_DEFAULT = 60
@@ -1013,6 +1016,24 @@ def operator_filter(text: str) -> tuple[str, list]:
     if not re.search(r"[A-Za-z0-9]", out):
         return OPERATOR_FALLBACK, removed
     return out, removed
+
+
+def fuzzy_experience(text: str) -> "Experience | None":
+    """For the Operator only: a short utterance that is nearly a listed name (STT near-miss such as
+    'Thera Connor' for 'Sarah Connor') connects. Letters-only similarity >= 0.70 over the whole
+    utterance (measured 2026-09-20: real mishears 0.73-0.86, benign short phrases <= 0.67), and at
+    most three words, so a sentence containing a name does not qualify (match_experience does)."""
+    import difflib
+    norm = re.sub(r"[^a-z]", "", (text or "").lower())
+    if not norm or len((text or "").split()) > 3:
+        return None
+    best, best_r = None, 0.0
+    for e in listed_games():
+        for name in tuple(e.directory.say) + (e.key,):
+            r = difflib.SequenceMatcher(None, norm, re.sub(r"[^a-z]", "", name.lower())).ratio()
+            if r > best_r:
+                best, best_r = e, r
+    return best if best_r >= 0.70 else None
 
 
 def operator_available(cfg) -> bool:
@@ -1428,6 +1449,14 @@ async def llm_warmup_task(url: str, model: str, log: CallLogger) -> None:
             log.info(kv(event="llm_warm", ms=sw.ms, attempt=attempt, model=model))
             global LLM_WARM_OK
             LLM_WARM_OK = True
+            if OPERATOR_EXPERIENCE is not None:
+                try:
+                    with Stopwatch() as sw2:
+                        await llm_reply([], "OPERATOR?", url=url, model=model, num_predict=1,
+                                        system_prompt=OPERATOR_EXPERIENCE.system_prompt)
+                    log.info(kv(event="llm_warm_operator", ms=sw2.ms))
+                except PipelineError as e:
+                    log.warning(kv(event="llm_warm_operator_failed", err=e.err[:120]))
             return
         except PipelineError as e:
             if attempt in (1, 5, 30) or attempt % 60 == 0:
@@ -2270,7 +2299,8 @@ async def conversation(sess: CallSession) -> None:
         try:
             if cfg.no_stt:
                 raise PipelineError("stt", "disabled (--no-stt)")
-            text = await transcribe(utt, cfg.whisper_model, sess.log, cfg.stt_prompt)
+            stt_prompt = OPERATOR_STT_PROMPT if is_operator else (cfg.stt_prompt + " " + cfg.wake_prompt)
+            text = await transcribe(utt, cfg.whisper_model, sess.log, stt_prompt)
             if not text or not re.search(r"[A-Za-z0-9]", text):
                 sess.log.warning(kv(event="empty_utterance"))
                 continue
@@ -2290,7 +2320,7 @@ async def conversation(sess: CallSession) -> None:
                 except PipelineError:
                     pass
                 return   # brain_task -> ARMED -> the menu; earned flags persist for the call
-            target = match_experience(text)
+            target = match_experience(text) or (fuzzy_experience(text) if is_operator else None)
             if target is not None and target.key != sess.experience.key:
                 # Arcade: another character's name (or operator / goodbye) said mid-game switches
                 # straight to it — the flag tally promises "say another name".
