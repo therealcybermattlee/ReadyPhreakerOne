@@ -2838,7 +2838,8 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="games", n=len(games), roster=",".join(f"{e.key}:{e.archetype}"
                                                              for e in WAKE_EXPERIENCES if is_game(e.key))))
     validate_games(log)
-    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES, INTRO_FRAMES
+    global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES, INTRO_FRAMES, \
+        MENU_GREETING_FRAMES
     menu_pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
     if cfg.menu_audio:
         # Recorded menu greeting, looped with a trailing pause (highest precedence).
