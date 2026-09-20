@@ -545,9 +545,8 @@ class WakeExperienceTests(unittest.TestCase):
             "dead or alive you are coming with me": "robocop",
             "the cake is a lie": "glados",
             "cake is a lie": "glados",
-            "elliott": "et",
             "e t phone home": "et",
-            "i want to phone home": "et",
+            "i want to phone home": "et",     # 'phone home' is E.T.'s only wake phrase
             "let me do a kick flip": "tonyhawk",
             "kickflip": "tonyhawk",
             "tony hawk": "tonyhawk",
@@ -1371,8 +1370,11 @@ class SpeechBargeInTests(unittest.TestCase):
     def test_terminator_summons_skynet_and_names_switch_games(self):
         for t in ["skynet", "sky net", "terminator", "sarah connor", "I said sky and head", "sky nut"]:
             self.assertEqual(w.match_experience(t).key, "skynet", t)
-        for t in ["E2.", "e tea", "E.T.", "phone home"]:
+        for t in ["phone home", "Phone home.", "fone home"]:
             self.assertEqual(w.match_experience(t).key, "et", t)
+        for t in ["E2.", "e tea", "E.T.", "E.P.", "elliott"]:      # only 'phone home' summons E.T. now
+            m = w.match_experience(t)
+            self.assertTrue(m is None or m.key != "et", t)
 
 
 class WarTurnTests(unittest.TestCase):

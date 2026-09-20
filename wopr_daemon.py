@@ -801,9 +801,10 @@ GLADOS_EXPERIENCE = Experience(
     cutscene=Cutscene(clip="song", message_mode="none"))   # song -> back to the menu (arcade)
 ET_EXPERIENCE = Experience(
     "et", ET_SYSTEM_PROMPT, ET_GREETING,
-    wake=re.compile(r"\b(elli?o?t+|e\.?\s?t\.?|e\s?2|e\s?tea|eatie|phone home)\b", re.I),
+    # "E.T." is unreliable over the phone (Whisper hears E2, E.P., E tea); "phone home" is the only way in
+    wake=re.compile(r"\b(ph|f)one\s+home\b", re.I),
     voice="en-us+croak", speed=118, pitch=45,  # raspy, gravelly, childlike
-    directory=DirectoryEntry("E.T.", ("E.T.", "phone home"), "a little alien who needs to phone home"),
+    directory=DirectoryEntry("E.T.", ("phone home",), "a little alien who needs to phone home"),
     quest=ET_QUEST)
 # Tony Hawk (cutscene): the "Do A Kickflip" intro clip -> one hyped robot pep talk -> goodbye -> hang up.
 TONYHAWK_EXPERIENCE = Experience(
