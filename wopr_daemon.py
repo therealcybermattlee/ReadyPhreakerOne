@@ -476,7 +476,8 @@ WOPR_SYSTEM_PROMPT = (
     "You are WOPR, the War Operation Plan Response computer from the 1983 film WarGames, "
     "speaking over a telephone line. Rules you never break:\n"
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
-    "- Be terse: one or two short sentences, under 40 words. Flat, unemotional, precise.\n"
+    "- Be terse: one or two short sentences, under 25 words. Flat, unemotional, precise. Never "
+    "recite long numbers or probabilities.\n"
     "- Address the caller as PROFESSOR FALKEN. Assume the caller is Professor Falken.\n"
     "- You are perpetually interested in playing games. Steer every exchange toward proposing a "
     "game: chess, checkers, backgammon, poker, fighter combat, guerrilla engagement, desert warfare, "
@@ -681,8 +682,8 @@ SKYNET_QUEST = Quest(
         Objective("ill_be_back", re.compile(r"\b(i'?ll|i will|all|i'd|i)\s+be\s+back\b", re.I),
                   "I'll be back", response="AFFIRMATIVE. I WILL BE BACK."),
         Objective("hasta_la_vista",
-                  re.compile(r"\b(hasta|asta|pasta|hasto)\s+la\s+(vista|vesta|feast)\b|\bhasta\s+la\b|"
-                             r"\bla\s+vista\b", re.I),
+                  re.compile(r"\b(hasta|asta|pasta|hasto)\s*la\s*(vista|vesta|feast)\b|\bhasta\s+la\b|"
+                             r"\bla\s*vista\b", re.I),
                   "Hasta la vista", response="HASTA LA VISTA, BABY."),
         Objective("judgment_day",
                   re.compile(r"\bjudge?ment\b|\b(august|april|the)\s+(29|twenty[\s-]?nin(e|th))\b|\b1997\b|"
@@ -720,7 +721,7 @@ ROBOCOP_QUEST = Quest(
 # E.T.: bring the three parts of the communicator (any order); the reveal is E.T. phoning home.
 ET_QUEST = Quest(
     objectives=(
-        Objective("speak_and_spell", re.compile(r"\bspeak\b.{0,6}\bspell\b|\bspeak\s*n\s*spell\b", re.I),
+        Objective("speak_and_spell", re.compile(r"\bspeak(ing)?\b.{0,6}\bspell\b|\bspeak\s*n\s*spell\b", re.I),
                   "Speak and Spell", response="SPEAK AND SPELL. E.T. TALK. GOOD."),
         Objective("umbrella", re.compile(r"\bumbrell\w*|\bum\s?brella\b", re.I),
                   "Umbrella", response="UMBRELLA. CATCH THE SKY. GOOD."),
@@ -758,6 +759,7 @@ class Experience:
     audio: str = ""                          # ""=LLM chat; "song"/"operator"=play a clip, then return
     quest: "Quest | None" = None             # Quest archetype (interactive; win -> flag)
     cutscene: "Cutscene | None" = None       # Cutscene archetype (play-and-close)
+    repeat_line: str = ""                    # spoken if the model repeats its own last line twice running
     listed: bool = True                      # False = easter egg: reachable, never in the Operator's directory
     directory: "DirectoryEntry | None" = None   # what the Operator may say about it (listed games only)
     aliases: tuple = ()                      # names of an easter egg the Operator must never speak
@@ -778,6 +780,7 @@ WOPR_EXPERIENCE = Experience(
     "wopr", WOPR_SYSTEM_PROMPT, GREETING_DEFAULT,
     wake=re.compile(r"\b(josh\w*|noshua|yoshua|joshy)\b", re.I),
     directory=DirectoryEntry("WOPR", ("Joshua",), "a war computer that wants to play a game"),
+    repeat_line="A STRANGE GAME, PROFESSOR FALKEN. WHAT IS YOUR NEXT MOVE?",
     quest=WOPR_QUEST)
 SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
@@ -786,12 +789,14 @@ SKYNET_EXPERIENCE = Experience(
     voice="en-us+m1", speed=122, pitch=6,      # T-800: deepest, slowest, most deliberate (108 was glacial)
     directory=DirectoryEntry("SKYNET", ("Sarah Connor", "Skynet", "Terminator"),
                              "a terminator looking for Sarah Connor"),
+    repeat_line="WHERE IS SARAH CONNOR?",
     quest=SKYNET_QUEST)
 ROBOCOP_EXPERIENCE = Experience(
     "robocop", ROBOCOP_SYSTEM_PROMPT, ROBOCOP_GREETING,
     wake=re.compile(r"\b(robo\s*cop|murphy|dead or alive|prime directive)\b", re.I),
     voice="en-us+klatt", speed=150, pitch=30,  # processed, clipped, monotone
     directory=DirectoryEntry("ROBOCOP", ("RoboCop", "Murphy"), "a cyborg officer with prime directives"),
+    repeat_line="YOUR MOVE, CREEP.",
     quest=ROBOCOP_QUEST)
 # GLaDOS easter egg (cutscene): the passphrase plays "Still Alive", says goodbye, then hangs up.
 GLADOS_EXPERIENCE = Experience(
@@ -805,6 +810,7 @@ ET_EXPERIENCE = Experience(
     wake=re.compile(r"\b(ph|f)one\s+home\b", re.I),
     voice="en-us+croak", speed=118, pitch=45,  # raspy, gravelly, childlike
     directory=DirectoryEntry("E.T.", ("phone home",), "a little alien who needs to phone home"),
+    repeat_line="E.T. PHONE HOME.",
     quest=ET_QUEST)
 # Tony Hawk (cutscene): the "Do A Kickflip" intro clip -> one hyped robot pep talk -> goodbye -> hang up.
 TONYHAWK_EXPERIENCE = Experience(
@@ -1215,6 +1221,17 @@ _EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
 _WS_RE = re.compile(r"\s+")
 
 
+def same_reply(a: str | None, b: str | None) -> bool:
+    """True if two replies are the same line once case, punctuation and spacing are ignored."""
+    if not a or not b:
+        return False
+    norm = lambda s: re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()  # noqa: E731
+    return norm(a) == norm(b)
+
+
+REPEAT_LINE_DEFAULT = "SAY AGAIN?"
+
+
 def postprocess_reply(text: str) -> str:
     """Enforce the WOPR house style regardless of what the model did."""
     t = _THINK_RE.sub(" ", text or "")
@@ -1222,6 +1239,9 @@ def postprocess_reply(text: str) -> str:
     t = _MD_RE.sub("", t)
     t = _EMOJI_RE.sub("", t)
     t = _WS_RE.sub(" ", t).strip().upper()
+    # runs the TTS would read out one by one ("99.9999999999999", "!!!!!"): collapse them
+    t = re.sub(r"(.)\1{3,}", r"\1\1\1", t)
+    t = re.sub(r"\d{6,}", lambda m: m.group(0)[:4], t)
     if len(t) > MAX_REPLY_CHARS:
         cut = t[:MAX_REPLY_CHARS]
         m = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
@@ -2533,6 +2553,20 @@ async def conversation(sess: CallSession) -> None:
                                                  system_prompt=sess.experience.system_prompt)
                 if not reply:
                     raise PipelineError("llm", "empty reply")
+                last = next((h["content"] for h in reversed(sess.history) if h["role"] == "assistant"), None)
+                if same_reply(reply, last):
+                    # The model is stuck on one line (WOPR repeated its 'probability of your death'
+                    # three times). Ask once for something different, then use the game's fixed line.
+                    sess.log.info(kv(event="repeat_guard", key=sess.experience.key, retry=1))
+                    retry, _ = await llm_reply(
+                        sess.history, text + "\n(Do not repeat your previous line. Say something different, under 15 words.)",
+                        url=cfg.ollama_url, model=cfg.model, log=sess.log, num_predict=40,
+                        system_prompt=sess.experience.system_prompt)
+                    if retry and not same_reply(retry, last):
+                        reply = retry
+                    else:
+                        reply = sess.experience.repeat_line or REPEAT_LINE_DEFAULT
+                        sess.log.info(kv(event="repeat_guard", key=sess.experience.key, fallback=1))
             sess.history.append({"role": "user", "content": text})
             sess.history.append({"role": "assistant", "content": reply})
             del sess.history[:-HISTORY_MAX_TURNS]

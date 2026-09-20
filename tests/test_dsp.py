@@ -877,6 +877,7 @@ class QuestWinTests(unittest.TestCase):
         q = w.QuestState(quest=w.SKYNET_QUEST)
         self.assertEqual(q.update("judgement day is coming"), "judgment_day")   # STT spelling
         self.assertEqual(q.update("pasta la vista baby"), "hasta_la_vista")     # mishear
+        self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update("Asta LaVista."), "hasta_la_vista")
         self.assertFalse(q.unlocked)
         self.assertEqual(q.update("all be back"), "ill_be_back")                # mishear
         self.assertTrue(q.unlocked)
@@ -905,6 +906,7 @@ class QuestWinTests(unittest.TestCase):
     def test_et_unlocks_from_the_communicator_parts(self):
         q = w.QuestState(quest=w.ET_QUEST)
         self.assertEqual(q.update("here is a speak n spell"), "speak_and_spell")   # mishear
+        self.assertEqual(w.QuestState(quest=w.ET_QUEST).update("Speaking spell"), "speak_and_spell")
         self.assertEqual(q.update("I brought umbrellas"), "umbrella")
         self.assertFalse(q.unlocked)
         self.assertEqual(q.update("and a turntable"), "record_player")          # synonym
@@ -1553,4 +1555,20 @@ class OperatorNearMissTests(unittest.TestCase):
                 w.OPERATOR_RETURN_LINE, w.OPERATOR_MENU_ACK, w.OPERATOR_CLUES_EXHAUSTED):
             self.assertNotRegex(c, r"\bHON\b", c)
         self.assertIn("Sarah Connor", w.OPERATOR_STT_PROMPT)
+
+
+class RunawayReplyTests(unittest.TestCase):
+    def test_digit_and_character_runs_are_collapsed(self):
+        t = w.postprocess_reply("THE PROBABILITY OF YOUR DEATH IS 99.9999999999999999999999999 PERCENT!!!!!!")
+        self.assertNotIn("9999", t)
+        self.assertIn("99.999", t)
+        self.assertNotIn("!!!!", t)
+        self.assertEqual(w.postprocess_reply("code 1234567890"), "CODE 1234")
+
+    def test_same_reply_ignores_case_and_punctuation(self):
+        self.assertTrue(w.same_reply("Hello, Professor!", "hello professor"))
+        self.assertFalse(w.same_reply("Hello", "Goodbye"))
+        self.assertFalse(w.same_reply("Hello", None))
+        for e in (w.WOPR_EXPERIENCE, w.SKYNET_EXPERIENCE, w.ROBOCOP_EXPERIENCE, w.ET_EXPERIENCE):
+            self.assertTrue(e.repeat_line)
 
