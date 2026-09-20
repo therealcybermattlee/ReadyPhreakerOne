@@ -908,7 +908,9 @@ def flag_tally(sess) -> str:
         m = sess.cfg.master_flag
         sess.log.info(kv(event="master_flag", flag=m))
         return f"ALL {n} FLAGS. YOU BEAT THEM ALL. YOUR FINAL FLAG. {m}. AGAIN. {m}. SAY GOODBYE, OR PLAY AGAIN."
-    return f"{won} OF {n} FLAGS. SAY A NAME, MAIN MENU, OR GOODBYE."
+    if won == n - 1:
+        return f"{won} OF {n} FLAGS. ONE MORE AND YOU EARN A FIFTH FLAG NOBODY ELSE HAS. SAY A NAME."
+    return f"{won} OF {n} FLAGS. WIN THEM ALL FOR A FIFTH. SAY A NAME, MAIN MENU, OR GOODBYE."
 
 
 def flag_report(sess) -> str:
@@ -926,7 +928,10 @@ def flag_report(sess) -> str:
     if won >= n:
         m = sess.cfg.master_flag
         return f"YOU HOLD ALL {n} FLAGS. {lines}. YOUR FINAL FLAG IS {m}. AGAIN. {m}."
-    return f"YOU HOLD {won} OF {n} FLAGS. {lines}. {n - won} TO GO."
+    left = n - won
+    push = ("ONE MORE AND THE FIFTH FLAG IS YOURS." if left == 1
+            else f"{left} TO GO. WIN THEM ALL AND THERE IS A FIFTH FLAG.")
+    return f"YOU HOLD {won} OF {n} FLAGS. {lines}. {push}"
 
 
 def validate_games(log) -> int:

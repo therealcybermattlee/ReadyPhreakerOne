@@ -1605,7 +1605,9 @@ class FifthFlagTests(unittest.TestCase):
             for k in ("wopr", "skynet", "robocop"):
                 s.note_game(k, won=True)
             self.assertTrue(w.flag_tally(s).startswith("3 OF 4 FLAGS"))
+            self.assertIn("FIFTH FLAG", w.flag_tally(s))                    # the incentive, one to go
             self.assertIn("3 OF 4", w.flag_report(s)); self.assertNotIn("TEST MASTER", w.flag_report(s))
+            self.assertIn("ONE MORE AND THE FIFTH FLAG IS YOURS", w.flag_report(s))
             self.assertIn("ROBOCOP: DIRECTIVE FOUR CLASSIFIED", w.flag_report(s))
             self.assertIn("WOPR: JOSHUA FIVE BY FIVE", w.flag_report(s))
             s.note_game("et", won=True)
