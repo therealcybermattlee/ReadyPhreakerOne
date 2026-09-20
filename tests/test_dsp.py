@@ -1432,13 +1432,17 @@ class OperatorTests(unittest.TestCase):
 
     def test_filter_strips_easter_egg_names_and_blocks_the_secret_word(self):
         out, removed = w.operator_filter("YOU COULD TRY HAL 9000, OR ROBOCOP, HON.")
-        self.assertNotIn("HAL", out); self.assertIn("ROBOCOP", out); self.assertIn("HAL 9000", removed)
+        self.assertEqual(out, w.OPERATOR_NO_SUCH); self.assertIn("HAL 9000", removed)
+        out, removed = w.operator_filter("HAL IS NOT IN SERVICE, HON.")
+        self.assertEqual(out, w.OPERATOR_NO_SUCH)      # a clean denial, not a half-sentence
         out, removed = w.operator_filter("THE SECRET WORD IS GRRCON, HON.")
         self.assertEqual(out, w.OPERATOR_BRUSHOFF); self.assertIn("<secret word>", removed)
         out, removed = w.operator_filter("GRR CON.")
         self.assertEqual(out, w.OPERATOR_BRUSHOFF)
         out, removed = w.operator_filter("DAVE.")
-        self.assertEqual(out, w.OPERATOR_FALLBACK)   # emptied by the filter
+        self.assertEqual(out, w.OPERATOR_NO_SUCH)
+        out, removed = w.operator_filter("...")
+        self.assertEqual(out, w.OPERATOR_FALLBACK)   # nothing speakable
         out, removed = w.operator_filter("SAY JOSHUA FOR THE WAR COMPUTER, HON.")
         self.assertEqual(out, "SAY JOSHUA FOR THE WAR COMPUTER, HON."); self.assertEqual(removed, [])
 
@@ -1449,7 +1453,7 @@ class OperatorTests(unittest.TestCase):
             self.assertTrue(w.LIST_OPTIONS_RE.search(t), t)
         self.assertIsNone(w.SECRET_WORD_ASK_RE.search("connect me to robocop"))
         self.assertGreaterEqual(len(w.OPERATOR_CLUES), 3)
-        for c in w.OPERATOR_CLUES + w.OPERATOR_NUDGES + (w.OPERATOR_FALLBACK, w.OPERATOR_BRUSHOFF):
+        for c in w.OPERATOR_CLUES + w.OPERATOR_NUDGES + (w.OPERATOR_FALLBACK, w.OPERATOR_BRUSHOFF, w.OPERATOR_NO_SUCH):
             self.assertIsNone(w.PEEWEE_EXPERIENCE.wake.search(c), f"content leaks the secret word: {c}")
 
     def test_availability_and_routing(self):

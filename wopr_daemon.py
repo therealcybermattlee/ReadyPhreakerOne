@@ -936,6 +936,7 @@ OPERATOR_NUDGES = (
 )
 OPERATOR_FALLBACK = "ONE MOMENT, HON, THE BOARD IS LIT UP. SAY A NAME AND I WILL CONNECT YOU."
 OPERATOR_BRUSHOFF = "I CANNOT GIVE OUT THAT INFORMATION, HON. ASK ME FOR A CLUE INSTEAD."
+OPERATOR_NO_SUCH = "THERE IS NO SUCH EXTENSION ON THIS BOARD, HON. I ONLY CONNECT CALLS."
 OPERATOR_RETURN_LINE = "OPERATOR. BACK ON THE BOARD, HON. WHO IS NEXT?"
 OPERATOR_MENU_ACK = "YOU ARE WITH THE OPERATOR, HON. SAY A NAME, OR ASK WHO IS ON THE LINE."
 OPERATOR_VOICE_DEFAULT = "en-us+f3"
@@ -965,18 +966,19 @@ def render_directory() -> str:
 
 
 def operator_filter(text: str) -> tuple[str, list]:
-    """Enforce the Operator's guarantees on a reply before it is spoken: strip every easter-egg
-    alias, and block the secret word (any spelling its wake regex accepts). Returns (text, removed)."""
+    """Enforce the Operator's guarantees on a reply before it is spoken: a reply that names an
+    easter egg becomes the fixed denial (no half-sentences), and the secret word (any spelling its
+    wake regex accepts) becomes the brush-off. Returns (text, removed)."""
     removed = []
     out = text
     for e in WAKE_EXPERIENCES:
         if e.listed:
             continue
         for alias in e.aliases:
-            rx = re.compile(r"\b" + re.escape(alias) + r"\b", re.I)
-            if rx.search(out):
+            if re.search(r"\b" + re.escape(alias) + r"\b", out, re.I):
                 removed.append(alias)
-                out = rx.sub("", out)
+    if removed:
+        return OPERATOR_NO_SUCH, removed
     if PEEWEE_EXPERIENCE.wake.search(out):
         removed.append("<secret word>")
         return OPERATOR_BRUSHOFF, removed
