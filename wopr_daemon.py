@@ -84,12 +84,16 @@ ECHO_GUARD_WINDOWS = 20       # outbound windows (200 ms) whose "pass" verdict m
 # clip's sidetone peaked at ~1400 RMS per 100 ms while the caller talking over a clip hit
 # 2000–11000. So: sustained (300 ms) speech above both an absolute floor and 3× the running
 # sidetone level. The interrupting words are kept and fed to the game as the next utterance.
-BARGE_RMS_MIN = 1800.0        # int16 RMS a window must exceed (above any measured sidetone)
+BARGE_RMS_MIN = 1500.0        # int16 RMS a window must exceed (above any measured sidetone)
 BARGE_RATIO = 2.0             # … and exceed the running sidetone floor by this factor (the
                               # sidetone-aware term below is the primary guard; 2× keeps a shout over
                               # a loud clip reachable)
-BARGE_HOLD_WINDOWS = 30       # 300 ms of loud windows (with a miss budget) before we cut playback
-BARGE_MISS_BUDGET = 6         # quiet windows tolerated inside the run (speech has gaps)
+BARGE_SPAN_WINDOWS = 50       # look at the last 500 ms of 10 ms windows …
+BARGE_LOUD_WINDOWS = 25       # … and cut playback once 25 of them are loud. Speech is bursty: on a
+                              # real call the caller's loudest half-second had only 40–100 % of its
+                              # windows over the bar, so a consecutive-run test (the first design)
+                              # never fired. Tuned 2026-09-20 against three recorded calls: fires on
+                              # every real interruption, never on sidetone.
 BARGE_MIN_FRAMES = 50         # only plays of ≥ 1 s are interruptible (winks, beeps are not)
 SIDETONE_GAIN_MAX = 0.35      # inbound must also exceed this × the loudest outbound window of the last
                               # 400 ms. Measured 2026-09-20 on two real calls: sidetone ≈ 0.16–0.17 ×
@@ -600,7 +604,7 @@ TONYHAWK_GREETING = ("STOKED YOU CALLED. YOU CAN TOTALLY LAND THAT KICKFLIP. "
 OPERATOR_HINTS_DEFAULT = (
     "HERE IS WHAT YOU CAN DO. SAY JOSHUA TO REACH A CERTAIN WAR COMPUTER. SAY SARAH CONNOR, OR "
     "JOHN CONNOR. SAY ROBOCOP. SAY E.T. SAY KICKFLIP. SAY THE SECRET WORD. OR SAY: THE CAKE IS A "
-    "LIE. WHISTLE AGAIN ANY TIME TO COME BACK HERE. GO ON. TRY ONE."
+    "LIE. SAY MAIN MENU ANY TIME TO COME BACK HERE. GO ON. TRY ONE."
 )
 # TTS fallback for the "goodbye" sign-off clip (played when the caller says bye/thanks).
 GOODBYE_TEXT_DEFAULT = "THANKS FOR PLAYING, HACKER. COME BACK SOON."
@@ -1290,13 +1294,14 @@ class ToneDetector:
 
 @dataclasses.dataclass
 class BargeDetector:
-    """Speech-over-playback detector: fires after BARGE_HOLD_WINDOWS of windows louder than both
-    BARGE_RMS_MIN and BARGE_RATIO × the running sidetone floor. Keeps the last 600 ms of audio."""
+    """Speech-over-playback detector: fires once BARGE_LOUD_WINDOWS of the last BARGE_SPAN_WINDOWS
+    windows are louder than all of BARGE_RMS_MIN, BARGE_RATIO × the running sidetone floor, and
+    SIDETONE_GAIN_MAX × the loudest recent outbound window. Keeps the last 600 ms of audio."""
     floor: float = 0.0
     seen: int = 0
-    run: int = 0
-    misses: int = 0
     last_rms: float = 0.0
+    loud: collections.deque = dataclasses.field(
+        default_factory=lambda: collections.deque(maxlen=BARGE_SPAN_WINDOWS))
     buf: collections.deque = dataclasses.field(
         default_factory=lambda: collections.deque(maxlen=BARGE_BUFFER_WINDOWS))
 
@@ -1316,15 +1321,10 @@ class BargeDetector:
         loud = r > max(self.threshold, sidetone * SIDETONE_GAIN_MAX)
         if not loud:
             self.floor = r if self.seen == 1 else self.floor * 0.95 + r * 0.05
-        if loud:
-            self.run += 1
-            if self.run >= BARGE_HOLD_WINDOWS:
-                self.run = self.misses = 0
-                return True
-        elif self.run > 0 and self.misses < BARGE_MISS_BUDGET:
-            self.misses += 1
-        else:
-            self.run = self.misses = 0
+        self.loud.append(loud)
+        if sum(self.loud) >= BARGE_LOUD_WINDOWS:
+            self.loud.clear()
+            return True
         return False
 
 
@@ -1420,6 +1420,7 @@ class Config:
     enable_wake: bool = True                # listen for character wake phrases during the attract loop
     enable_seize: bool = True               # the line is dead until 2600 Hz seizes the trunk (the gate)
     seize_timeout: float = 90.0             # hang up an un-seized line after this many seconds (0 = never)
+    whistle_once: bool = True               # after the seize, stop listening for the whistle (voice only)
     wake_prompt: str = WAKE_PROMPT_DEFAULT
     transcript: str = ""
     sessions: str = ""
@@ -1679,7 +1680,10 @@ class CallSession:
         self.windows_in += 1
         self.recent_windows.append(win)
         masked = any(self.echo_ring)
-        fired = self.detector.update(win, masked)
+        # Whistle-once: after the trunk is seized the tone detector is switched off, so the rest of
+        # the call is voice only (one fewer thing that can barge in). --whistle-always restores it.
+        listen_for_whistle = not (self.seized and self.cfg.enable_seize and self.cfg.whistle_once)
+        fired = self.detector.update(win, masked) if listen_for_whistle else False
         if self.log.logger.isEnabledFor(logging.DEBUG):
             d = self.detector
             self.log.debug(kv(event="window", ratio=d.last_ratio, e26=d.last_e26, purity=d.last_purity,
@@ -2523,6 +2527,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-wake", action="store_true", default=env.get("WOPR_NO_WAKE", "") in ("1", "true", "yes"), help="disable listening for character wake phrases during the attract loop")
     p.add_argument("--no-seize", action="store_true", default=env.get("WOPR_NO_SEIZE", "") in ("1", "true", "yes"), help="disable the 2600 Hz gate: play the menu on pickup instead of a dead line")
     p.add_argument("--seize-timeout", type=float, default=float(env.get("WOPR_SEIZE_TIMEOUT", "90")), help="seconds to hold a dead (un-whistled) line before hanging up; 0 = never")
+    p.add_argument("--whistle-always", action="store_true", default=env.get("WOPR_WHISTLE_ALWAYS", "") in ("1", "true", "yes"), help="keep listening for 2600 Hz after the seize (a later whistle returns to the menu); default: voice only after the seize")
     p.add_argument("--wake-prompt", default=env.get("WOPR_WAKE_PROMPT", WAKE_PROMPT_DEFAULT), help="Whisper initial_prompt biasing the idle wake-phrase transcription")
     p.add_argument("--chess-moves", default=env.get("WOPR_CHESS", CHESS_MOVES_DEFAULT), help="SAN move list WOPR narrates one ply at a time (default: the Opera Game)")
     p.add_argument("--chess-offer", default=env.get("WOPR_CHESS_OFFER", CHESS_OFFER_DEFAULT), help="line WOPR speaks after the flag to offer a game of chess")
@@ -2544,7 +2549,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
-                 enable_seize=not a.no_seize, seize_timeout=a.seize_timeout,
+                 enable_seize=not a.no_seize, seize_timeout=a.seize_timeout, whistle_once=not a.whistle_always,
                  menu_audio=a.menu_audio, menu_greeting=a.menu_greeting, menu_gap_ms=a.menu_gap_ms,
                  operator_audio=a.operator_audio, operator_hints=a.operator_hints,
                  goodbye_audio=a.goodbye_audio, goodbye_text=a.goodbye_text,

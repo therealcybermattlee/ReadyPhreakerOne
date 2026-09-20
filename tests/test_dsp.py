@@ -1200,10 +1200,33 @@ class TrunkSeizeTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_whistle_once_ignores_later_whistles_by_default(self):
+        import asyncio
+
+        async def scenario():
+            sess = self._sess()
+            self._whistle(sess)
+            self.assertTrue(sess.seized)
+            sess.whistle_pending = False
+            sess.detected_evt.clear()
+            self._whistle(sess, n=w.HOLD_WINDOWS + w.REARM_WINDOWS + 5)    # a second whistle
+            self.assertFalse(sess.whistle_pending, "voice only after the seize")
+            self.assertEqual(sess.detector.fires, 1)
+            always = self._sess(w.Config(whistle_once=False))
+            self._whistle(always); always.whistle_pending = False; always.detected_evt.clear()
+            for i in range(w.REARM_WINDOWS + 2):
+                always.process_inbound_window(np.zeros(80, dtype="<i2"))
+            self._whistle(always)
+            self.assertTrue(always.whistle_pending, "--whistle-always: a later whistle returns to the menu")
+            self.assertTrue(w.parse_args([]).whistle_once)
+            self.assertFalse(w.parse_args(["--whistle-always"]).whistle_once)
+
+        asyncio.run(scenario())
+
     def test_operator_hints_no_longer_route_the_whistle_to_wopr(self):
         self.assertNotIn("WHISTLE TWENTY SIX HUNDRED HERTZ, OR SAY JOSHUA", w.OPERATOR_HINTS_DEFAULT)
         self.assertIn("JOSHUA", w.OPERATOR_HINTS_DEFAULT)
-        self.assertIn("WHISTLE AGAIN", w.OPERATOR_HINTS_DEFAULT)
+        self.assertIn("MAIN MENU", w.OPERATOR_HINTS_DEFAULT)
 
 
 class ClipConventionTests(unittest.TestCase):
@@ -1254,7 +1277,18 @@ class SpeechBargeInTests(unittest.TestCase):
         for win in self._noise(rng, 500, 200) + self._noise(rng, 1400, 40) + self._noise(rng, 500, 100):
             self.assertFalse(det.update(win))
         # the caller talking over it (~3000 RMS) for 300 ms
-        fired = [det.update(win) for win in self._noise(rng, 3000, w.BARGE_HOLD_WINDOWS + 2)]
+        fired = [det.update(win) for win in self._noise(rng, 3000, w.BARGE_LOUD_WINDOWS + 2)]
+        self.assertEqual(sum(fired), 1)
+
+    def test_bursty_speech_fires(self):
+        """Real speech clears the bar in only ~half its 10 ms windows; that must still count."""
+        rng = np.random.default_rng(15)
+        det = w.BargeDetector()
+        for win in self._noise(rng, 400, 50):
+            det.update(win)
+        fired = []
+        for k in range(w.BARGE_SPAN_WINDOWS):
+            fired.append(det.update(self._noise(rng, 3000 if k % 2 == 0 else 600, 1)[0]))
         self.assertEqual(sum(fired), 1)
 
     def test_loud_playback_raises_the_bar(self):
@@ -1264,10 +1298,10 @@ class SpeechBargeInTests(unittest.TestCase):
         det = w.BargeDetector()
         for win in self._noise(rng, 2700, 60):                 # sidetone of a 16000-RMS clip
             self.assertFalse(det.update(win, sidetone=16000.0))
-        fired = [det.update(win, sidetone=16000.0) for win in self._noise(rng, 8000, w.BARGE_HOLD_WINDOWS + 2)]
+        fired = [det.update(win, sidetone=16000.0) for win in self._noise(rng, 8000, w.BARGE_LOUD_WINDOWS + 2)]
         self.assertEqual(sum(fired), 1)                        # the caller shouting over it
         det = w.BargeDetector()                                # silence out: the floor is the only bar
-        self.assertTrue(any(det.update(win, sidetone=0.0) for win in self._noise(rng, 2700, w.BARGE_HOLD_WINDOWS + 2)))
+        self.assertTrue(any(det.update(win, sidetone=0.0) for win in self._noise(rng, 2700, w.BARGE_LOUD_WINDOWS + 2)))
 
     def test_short_shout_does_not_fire(self):
         rng = np.random.default_rng(12)
@@ -1287,7 +1321,7 @@ class SpeechBargeInTests(unittest.TestCase):
             self.assertEqual(sess.outbound_q.qsize(), 200)
             sess.bargeable = True
             rng = np.random.default_rng(13)
-            for win in self._noise(rng, 3000, w.BARGE_HOLD_WINDOWS + 1):
+            for win in self._noise(rng, 3000, w.BARGE_LOUD_WINDOWS + 1):
                 sess.process_inbound_window(win)
             self.assertTrue(sess.interrupted)
             self.assertEqual(sess.outbound_q.qsize(), 0, "queued playback drained")
