@@ -820,7 +820,7 @@ ET_EXPERIENCE = Experience(
 # Tony Hawk (cutscene): the "Do A Kickflip" intro clip -> one hyped robot pep talk -> goodbye -> hang up.
 TONYHAWK_EXPERIENCE = Experience(
     "tonyhawk", TONYHAWK_SYSTEM_PROMPT, TONYHAWK_GREETING,
-    wake=re.compile(r"\b(kick\s?flip|tony hawk|ollie|do a kickflip)\b", re.I),
+    wake=re.compile(r"\b(kick\s?flip|tony hawk|ollie|do a kickflip|\w{0,6}flip)\b", re.I),   # 'breakflip' etc.
     voice="en-us+m3", speed=165, pitch=55,     # hyped, upbeat
     directory=DirectoryEntry("TONY HAWK", ("kickflip", "Tony Hawk"), "a skater with a pep talk"),
     cutscene=Cutscene(
@@ -1008,7 +1008,8 @@ SECRET_WORD_ASK_RE = re.compile(r"\b(secret\s+word|password|pass\s?phrase|the\s+
 FLAG_REPEAT_RE = re.compile(r"\b((what|say|repeat|tell me|read)\b.{0,25}\bflag|flag again|my flag|the flag\b)", re.I)
 FLAG_COUNT_RE = re.compile(r"\b(how many flags|my flags|flags (do|did) i|flag count|my score|what.s my score|"
                            r"how am i doing|how many (have|did) i)\b", re.I)
-LIST_OPTIONS_RE = re.compile(r"\b(list|options|what can i (say|do)|who (is|else is) (on|here)|choices|menu of)\b", re.I)
+LIST_OPTIONS_RE = re.compile(r"\b(list|options|what can i (say|do)|who (is|else is) (on|here)|choices|menu of|"
+                             r"play a game|a game|games|what games)\b", re.I)
 
 
 def listed_games() -> list:
@@ -1026,6 +1027,15 @@ def render_directory() -> str:
             lines.append(f"- {d.name}: the caller must work it out; give clues only. {d.blurb}.")
     lines.append("- To hang up: say 'goodbye'. To reach you again from any game: say 'main menu'.")
     return "\n".join(lines)
+
+
+def operator_directory_line() -> str:
+    """A fixed spoken directory: what to say for each listed game (the Operator's repeat fallback)."""
+    parts = []
+    for e in listed_games():
+        if e.directory.say:
+            parts.append(f"SAY {e.directory.say[0].upper()} FOR {e.directory.name}")
+    return ". ".join(parts) + ". OR ASK FOR A CLUE TO THE SECRET WORD."
 
 
 def operator_filter(text: str) -> tuple[str, list]:
@@ -2238,8 +2248,13 @@ async def run_cutscene(sess: CallSession) -> None:
         if gframes:
             await sess.play(gframes, "goodbye")
     if sess.interrupted:
+        # The caller talked over it: stop, and forget what they said (it is usually just "stop" or
+        # noise) so the Operator greets them normally and listens fresh. Not completed.
         sess.log.info(kv(event="cutscene_interrupted", key=sess.experience.key))
-        return                    # the caller talked over it: back to the menu, not completed
+        sess.interrupted = False
+        sess.vad.reset()
+        sess.utterance_evt.clear()
+        return
     sess.note_game(sess.experience.key, completed=True)   # played through to the end
     if cs.end_call:
         sess.hanging_up = True
@@ -2613,6 +2628,10 @@ async def conversation(sess: CallSession) -> None:
                                         reason="timeout" if isinstance(e, asyncio.TimeoutError) else e.stage))
                     reply = OPERATOR_FALLBACK
                 reply, removed = operator_filter(reply or OPERATOR_FALLBACK)
+                last = next((h["content"] for h in reversed(sess.history) if h["role"] == "assistant"), None)
+                if same_reply(reply, last):
+                    reply = operator_directory_line()      # never the same brush-off twice running
+                    sess.log.info(kv(event="repeat_guard", key="operator", fallback=1))
                 sess.log.info(kv(event="operator_filter", removed=",".join(removed) or "-", chars=len(reply)))
             else:
                 reply, _timing = await llm_reply(sess.history, text, url=cfg.ollama_url,

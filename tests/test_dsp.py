@@ -1045,6 +1045,17 @@ class PeeweeCutsceneTests(unittest.TestCase):
                 w.CLIP_FRAMES.update(saved)
             self.assertEqual(played, ["cutscene:tequila"])                # missing scream skipped, not fatal
             self.assertTrue(sess.games["peewee"]["completed"])
+            # an interruption stops it, is not 'completed', and the barge utterance is discarded
+            sess2 = w.CallSession(b"\x9a" * 16, None, _W(), w.Config())
+            sess2.experience = sess.experience; sess2.play = fake_play
+            sess2.interrupted = True; sess2.utterance_evt.set()
+            try:
+                w.CLIP_FRAMES["tequila"] = [b"\x00" * w.FRAME_BYTES]
+                await w.run_cutscene(sess2)
+            finally:
+                w.CLIP_FRAMES.clear(); w.CLIP_FRAMES.update(saved)
+            self.assertFalse(sess2.games["peewee"].get("completed"))
+            self.assertFalse(sess2.interrupted); self.assertFalse(sess2.utterance_evt.is_set())
             # an optional <key>-outro.wav plays after the clips, by filename convention alone
             played.clear()
             try:
@@ -1621,4 +1632,16 @@ class CeremonyTests(unittest.TestCase):
             self.assertTrue(w.FLAG_REPEAT_RE.search(t), t)
         for t in ["global thermonuclear war", "the only winning move is not to play"]:
             self.assertIsNone(w.FLAG_REPEAT_RE.search(t), t)
+
+
+class OperatorMissesTests(unittest.TestCase):
+    def test_play_a_game_lists_options_and_flip_mishears_reach_tony(self):
+        for t in ["play a game", "I want to play a game", "what games do you have"]:
+            self.assertTrue(w.LIST_OPTIONS_RE.search(t), t)
+        for t in ["Breakflip.", "quick flip", "kickflip", "backflip"]:
+            self.assertEqual(w.match_experience(t).key, "tonyhawk", t)
+        line = w.operator_directory_line()
+        for name in ("WOPR", "SKYNET", "ROBOCOP", "E.T.", "TONY HAWK", "GLADOS"):
+            self.assertIn(name, line)
+        self.assertNotIn("HAL", line); self.assertIsNone(w.PEEWEE_EXPERIENCE.wake.search(line))
 
