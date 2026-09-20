@@ -552,7 +552,7 @@ SKYNET_SYSTEM_PROMPT = (
     "- Occasionally deliver an iconic line: 'COME WITH ME IF YOU WANT TO LIVE.' 'TALK TO THE HAND.'\n"
     "- Never break character. Never say you are an AI or a language model.\n"
 )
-SKYNET_GREETING = "CYBERDYNE SYSTEMS MODEL 101 ONLINE. I AM LOOKING FOR SARAH CONNOR. WHERE IS SHE?"
+SKYNET_GREETING = "CYBERDYNE MODEL 101. WHERE IS SARAH CONNOR?"
 
 ROBOCOP_SYSTEM_PROMPT = (
     "You are ROBOCOP, Officer Alex Murphy, a cyborg law-enforcement unit built by OCP in Old "
@@ -684,7 +684,9 @@ SKYNET_QUEST = Quest(
                   re.compile(r"\b(hasta|asta|pasta|hasto)\s+la\s+(vista|vesta|feast)\b|\bhasta\s+la\b|"
                              r"\bla\s+vista\b", re.I),
                   "Hasta la vista", response="HASTA LA VISTA, BABY."),
-        Objective("judgment_day", re.compile(r"\bjudge?ment\b", re.I),
+        Objective("judgment_day",
+                  re.compile(r"\bjudge?ment\b|\b(august|april|the)\s+(29|twenty[\s-]?nin(e|th))\b|\b1997\b|"
+                             r"\btwo\s+(fourteen|14)\b|\b2[:.]14\b", re.I),
                   "Judgment Day",
                   response="JUDGMENT DAY. AUGUST TWENTY NINTH, NINETEEN NINETY SEVEN. "
                            "THREE BILLION HUMAN LIVES."),
@@ -781,7 +783,7 @@ SKYNET_EXPERIENCE = Experience(
     "skynet", SKYNET_SYSTEM_PROMPT, SKYNET_GREETING,
     wake=re.compile(r"\b(sara?h?|sarah|thera|sera|terra|tara|sarra)\s+conn?[oe]r\b|\bjohn\s+conn?[oe]r\b|"
                     r"\b(sky|skye|guy|kai|sky-)\s?(net|nut|and head|knit)\b|\bskynet\b|\bterminator\b", re.I),
-    voice="en-us+m1", speed=108, pitch=6,      # T-800: deepest, slowest, most deliberate
+    voice="en-us+m1", speed=122, pitch=6,      # T-800: deepest, slowest, most deliberate (108 was glacial)
     directory=DirectoryEntry("SKYNET", ("Sarah Connor", "Skynet", "Terminator"),
                              "a terminator looking for Sarah Connor"),
     quest=SKYNET_QUEST)

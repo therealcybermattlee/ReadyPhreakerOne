@@ -885,6 +885,9 @@ class QuestWinTests(unittest.TestCase):
         for t in ["I'll be back.", "Hasta la vista, baby.", "Judgment Day."]:
             q2.update(t)
         self.assertTrue(q2.unlocked)
+        # the date counts too, including the mishears heard on a real call
+        for t in ["August 29, 1997", "April 29, 1997.", "the twenty ninth", "2:14 a.m.", "1997"]:
+            self.assertEqual(w.QuestState(quest=w.SKYNET_QUEST).update(t), "judgment_day", t)
 
     def test_robocop_requires_directives_in_order(self):
         q = w.QuestState(quest=w.ROBOCOP_QUEST)
