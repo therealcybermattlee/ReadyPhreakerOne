@@ -1,7 +1,7 @@
 # ReadyPhreakerOne — a phreaking payphone full of movie AIs
 
 A phone-phreaking homage. Lift the handset of a coin-op payphone and a greeter welcomes you:
-**"HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?"** Say a passphrase — or whistle 2600 Hz —
+**"HELLO HACKER. WELCOME TO <THE VENUE>. HOW MAY I HELP YOU?"** (the venue is `WOPR_VENUE`) Say a passphrase — or whistle 2600 Hz —
 and a character from the movies answers: WOPR from *WarGames*, Skynet, RoboCop, E.T., Tony Hawk, or
 GLaDOS. Each is a live local-LLM conversation in its own voice.
 
@@ -169,17 +169,17 @@ Knobs, all at the top of `wopr_daemon.py` (printed as `event=config` at startup)
 
 ## Movie-quest flag (easter egg)
 
-WOPR gives up a secret **flag** if the caller re-enacts WarGames over the course of a call. Four
-beats, in any order, tracked in code (not by the LLM, so the secret never leaks or fires early):
+WOPR gives up a secret **flag** if the caller re-enacts WarGames over the course of a call. Say
+**Joshua** to reach WOPR, then three beats, in any order, tracked in code (not by the LLM, so the
+secret never leaks or fires early):
 
-1. name the backdoor — say **Joshua**
-2. ask to **play a game**
-3. choose **global thermonuclear war**
-4. deliver the lesson — **"the only winning move is not to play"**
+1. ask to **play a game**
+2. choose **global thermonuclear war**
+3. deliver the lesson — **"the only winning move is not to play"**
 
-On the fourth, WOPR plays a fanfare and speaks the flag (default `JOSHUA FIVE BY FIVE`). The beat
+On the third, WOPR plays a fanfare and speaks the flag (default `JOSHUA FIVE BY FIVE`). The beat
 regexes are tolerant of local-STT mishears (e.g. "Joshua" → "Noshua"); Joshua and the winning-move
-line are the real gates. Every beat logs `event=quest beat=… progress=n/4`, and the reveal logs
+line are the real gates. Every beat logs `event=quest beat=… progress=n/3`, and the reveal logs
 `event=flag_unlocked flag=…`.
 
 Customize in `/opt/wopr/wopr.env`:
