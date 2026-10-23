@@ -2,7 +2,7 @@
 
 ```
                          ┌──────────────────────────────┐
-                         │   PICK UP.   HEAR NOTHING.    │
+                         │   PICK UP.   HEAR A DIAL TONE.│
                          │   (you have 90 seconds)       │
                          └───────────────┬──────────────┘
                                          │
@@ -42,7 +42,7 @@
 
 ## HOW IT WORKS
 
-- **Nothing happens until you whistle.** 2600 Hz, the phreaker's tone. Close counts.
+- **The dial tone goes nowhere until you whistle.** 2600 Hz, the phreaker's tone. Close counts. Wait long enough and the line tells you what it is listening for.
 - **The Operator is a person, sort of.** Talk to her. She knows who is on the line and how to reach them. She will not tell you the secret word, but she gives clues if you ask.
 - **Say a name to be connected.** Say **main menu** from anywhere to get back to her. Say **goodbye** to hang up.
 - **Each character wants to hear certain things.** They will not tell you what. Ask them what they want and listen. If you know the movie, you know the lines.

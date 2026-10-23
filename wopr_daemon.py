@@ -531,6 +531,8 @@ FLAG_DEFAULT = "JOSHUA FIVE BY FIVE"
 # The fifth flag: spoken once the caller holds every quest flag, and repeated by the Operator on
 # request. Author-chosen; override with WOPR_MASTER_FLAG (keep it speakable).
 MASTER_FLAG_DEFAULT = "BLUE BOX ALPHA SEVEN"
+# Spoken over the dial tone to a caller who has not whistled yet (every --seize-hint-s seconds).
+SEIZE_HINT_DEFAULT = "I AM LISTENING FOR TWENTY SIX HUNDRED HERTZ."
 JOSHUA_LINE_DEFAULT = ("GREETINGS PROFESSOR FALKEN. IT HAS BEEN A LONG TIME. "
                        "HOW IS YOUR SON JOSHUA? SHALL WE PLAY A GAME?")
 # The flag is read in a Johnny 5 (Short Circuit) voice — brighter and faster than WOPR's croak.
@@ -1738,6 +1740,9 @@ class Config:
     enable_seize: bool = True               # the line is dead until 2600 Hz seizes the trunk (the gate)
     seize_timeout: float = 90.0             # hang up an un-seized line after this many seconds (0 = never)
     whistle_once: bool = True               # after the seize, stop listening for the whistle (voice only)
+    dial_tone: bool = True                  # an un-seized line plays a dial tone instead of dead silence
+    seize_hint_s: float = 30.0              # after this long un-seized, speak the hint (then every interval)
+    seize_hint: str = SEIZE_HINT_DEFAULT
     enable_operator: bool = True            # the live Operator hosts the call (else the recorded menu loop)
     operator_voice: str = OPERATOR_VOICE_DEFAULT
     operator_speed: int = OPERATOR_SPEED_DEFAULT
@@ -1785,6 +1790,21 @@ class Config:
 
 
 _WINK_FRAMES: list[bytes] | None = None
+_DIAL_TONE_FRAMES: list[bytes] | None = None
+DIAL_TONE_HZ = (350.0, 440.0)     # North American precise dial tone
+DIAL_TONE_AMPLITUDE = 0.18        # per component (~-12 dBFS together): audible, not fatiguing
+
+
+def dial_tone_frames() -> list[bytes]:
+    """One second of dial tone (looped by the writer while the line is un-seized). 350 + 440 Hz sit
+    far below the whistle band, so its sidetone can never look like 2600 Hz to the detector."""
+    global _DIAL_TONE_FRAMES
+    if _DIAL_TONE_FRAMES is None:
+        n = SAMPLE_RATE
+        t = np.arange(n) / SAMPLE_RATE
+        x = sum(DIAL_TONE_AMPLITUDE * np.sin(2 * math.pi * hz * t) for hz in DIAL_TONE_HZ)
+        _DIAL_TONE_FRAMES = frames_from_pcm(f32_to_pcm16(x))
+    return _DIAL_TONE_FRAMES
 
 
 def clip_for(*keys: str) -> "list[bytes] | None":
@@ -2092,9 +2112,18 @@ class CallSession:
             self.log.info(kv(event="operator_unavailable", fallback="menu_loop"))
 
     def next_idle_frame(self) -> "bytes | None":
-        """The frame to send when nothing is queued: the menu loop once the trunk is seized and the
-        session is idle; otherwise None (silence). A dead line stays dead until the whistle."""
-        if self.state is not CallState.ARMED or not self.seized or not ATTRACT_FRAMES:
+        """The frame to send when nothing is queued: a dial tone until the trunk is seized (or silence
+        with --no-dial-tone); the menu loop once seized and idle; otherwise None (silence)."""
+        if self.state is not CallState.ARMED:
+            return None
+        if not self.seized:
+            if not (self.cfg.dial_tone and self.cfg.enable_seize):
+                return None
+            frames = dial_tone_frames()
+            frame_body = frames[self.attract_idx % len(frames)]
+            self.attract_idx += 1
+            return frame_body
+        if not ATTRACT_FRAMES:
             return None
         frame_body = ATTRACT_FRAMES[self.attract_idx % len(ATTRACT_FRAMES)]
         self.attract_idx += 1
@@ -2891,14 +2920,34 @@ async def _do_callback(cfg: Config, dial: str, after_call: str, kind: str) -> No
 async def seize_watchdog(sess: CallSession) -> None:
     """Hang up a line nobody whistled on. Off when the gate is off, the line is already seized, or
     the timeout is 0. Ends the call through the normal teardown (recorded as reason=no_seize)."""
-    if sess.seized or sess.cfg.seize_timeout <= 0:
-        return
-    await asyncio.sleep(sess.cfg.seize_timeout)
+    cfg = sess.cfg
     if sess.seized:
         return
-    sess.log.info(kv(event="seize_timeout", after_s=sess.cfg.seize_timeout))
-    await end_call(sess)
-    raise CallEnded("no_seize")
+    waited = 0.0
+    hint_at = cfg.seize_hint_s if cfg.seize_hint_s > 0 else None
+    while True:
+        # next thing to do: the hint (every seize_hint_s) or the hang-up (at seize_timeout)
+        next_hint = hint_at if hint_at is not None else float("inf")
+        next_end = cfg.seize_timeout if cfg.seize_timeout > 0 else float("inf")
+        if next_hint == float("inf") and next_end == float("inf"):
+            return
+        target = min(next_hint, next_end)
+        await asyncio.sleep(max(0.0, target - waited))
+        waited = target
+        if sess.seized:
+            return
+        if target == next_end:
+            sess.log.info(kv(event="seize_timeout", after_s=cfg.seize_timeout))
+            await end_call(sess)
+            raise CallEnded("no_seize")
+        # the hint, in the Operator's voice, over the dial tone; the whistle detector keeps listening
+        sess.log.info(kv(event="seize_hint", after_s=round(waited)))
+        try:
+            await sess.play(await tts_frames(cfg.seize_hint, sess.log, voice=cfg.operator_voice,
+                                             speed=cfg.operator_speed, pitch=cfg.operator_pitch), "seize_hint")
+        except PipelineError as e:
+            sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+        hint_at = waited + cfg.seize_hint_s
 
 
 async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, cfg: Config) -> None:
@@ -3031,6 +3080,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-wake", action="store_true", default=env.get("WOPR_NO_WAKE", "") in ("1", "true", "yes"), help="disable listening for character wake phrases during the attract loop")
     p.add_argument("--no-seize", action="store_true", default=env.get("WOPR_NO_SEIZE", "") in ("1", "true", "yes"), help="disable the 2600 Hz gate: play the menu on pickup instead of a dead line")
     p.add_argument("--seize-timeout", type=float, default=float(env.get("WOPR_SEIZE_TIMEOUT", "90")), help="seconds to hold a dead (un-whistled) line before hanging up; 0 = never")
+    p.add_argument("--no-dial-tone", action="store_true", default=env.get("WOPR_DIAL_TONE", "1") in ("0", "false", "no"), help="dead silence before the whistle instead of a dial tone")
+    p.add_argument("--seize-hint-s", type=float, default=float(env.get("WOPR_SEIZE_HINT_S", "30")), help="seconds of no whistle before the hint is spoken (repeats each interval); 0 = never")
+    p.add_argument("--seize-hint", default=env.get("WOPR_SEIZE_HINT", SEIZE_HINT_DEFAULT), help="what is said over the dial tone to a caller who has not whistled")
     p.add_argument("--no-operator", action="store_true", default=env.get("WOPR_OPERATOR", "1") in ("0", "false", "no"), help="host the call with the recorded menu loop instead of the live Operator")
     p.add_argument("--operator-voice", default=env.get("WOPR_OPERATOR_VOICE", OPERATOR_VOICE_DEFAULT))
     p.add_argument("--operator-speed", type=int, default=int(env.get("WOPR_OPERATOR_SPEED", OPERATOR_SPEED_DEFAULT)))
@@ -3059,6 +3111,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
                  enable_seize=not a.no_seize, seize_timeout=a.seize_timeout, whistle_once=not a.whistle_always,
+                 dial_tone=not a.no_dial_tone, seize_hint_s=a.seize_hint_s, seize_hint=a.seize_hint,
                  enable_operator=not a.no_operator, operator_voice=a.operator_voice,
                  operator_speed=a.operator_speed, operator_pitch=a.operator_pitch,
                  operator_reply_budget_s=a.operator_budget,

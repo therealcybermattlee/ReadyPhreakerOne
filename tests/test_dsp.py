@@ -1142,7 +1142,7 @@ class TrunkSeizeTests(unittest.TestCase):
         async def scenario():
             sess = self._sess()
             self.assertFalse(sess.seized)
-            self.assertIsNone(sess.next_idle_frame(), "dead line: no menu before the whistle")
+            self.assertNotIn(sess.next_idle_frame(), (w.ATTRACT_FRAMES or [None]), "no menu before the whistle")
             self._whistle(sess)
             self.assertTrue(sess.seized)
             self.assertTrue(sess.whistle_pending)
@@ -1153,6 +1153,56 @@ class TrunkSeizeTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_dial_tone_before_the_seize(self):
+        import asyncio
+
+        async def scenario():
+            frames = w.dial_tone_frames()
+            self.assertEqual(len(frames), 50)                       # one second, looped
+            pcm = np.frombuffer(b"".join(frames), dtype="<i2")
+            self.assertLess(w.estimate_peak_hz(pcm, lo=300.0, hi=500.0) - 440, 10)   # the 440 component
+            self.assertFalse(any(w.window_passes(x)[0] for x in w.pcm_windows(pcm.tobytes())),
+                             "dial tone must never look like a whistle")
+            sess = self._sess()
+            self.assertEqual(sess.next_idle_frame(), frames[0], "un-seized: dial tone")
+            self.assertEqual(sess.next_idle_frame(), frames[1])
+            quiet = self._sess(w.Config(dial_tone=False))
+            self.assertIsNone(quiet.next_idle_frame(), "--no-dial-tone: dead silence")
+            sess.set_state(w.CallState.SPEAKING)
+            self.assertIsNone(sess.next_idle_frame(), "not idle: nothing")
+
+        asyncio.run(scenario())
+
+    def test_watchdog_hints_then_hangs_up(self):
+        import asyncio
+
+        async def scenario():
+            played = []
+            async def fake_tts(text, log=None, **kw):
+                played.append(text); return [b"\x00" * w.FRAME_BYTES]
+            orig = w.tts_frames; w.tts_frames = fake_tts
+            try:
+                writes = []
+                sess = self._sess(w.Config(seize_timeout=0.09, seize_hint_s=0.03), writes)
+                async def drain():
+                    while True:
+                        await asyncio.sleep(0.001)
+                        while not sess.outbound_q.empty():
+                            sess.outbound_q.get_nowait(); sess.outbound_q.task_done()
+                t = asyncio.create_task(drain())
+                with self.assertRaises(w.CallEnded):
+                    await w.seize_watchdog(sess)
+                t.cancel()
+                self.assertEqual(played, [w.SEIZE_HINT_DEFAULT] * 2, "hints at 30 and 60 s (scaled), hang-up at 90")
+                self.assertIn(w.encode_frame(w.FrameType.TERMINATE), writes)
+                self.assertTrue(w.parse_args([]).dial_tone)
+                self.assertFalse(w.parse_args(["--no-dial-tone"]).dial_tone)
+                self.assertEqual(w.parse_args([]).seize_hint_s, 30.0)
+            finally:
+                w.tts_frames = orig
+
+        asyncio.run(scenario())
+
     def test_menu_plays_only_once_seized_and_idle(self):
         import asyncio
 
@@ -1160,7 +1210,7 @@ class TrunkSeizeTests(unittest.TestCase):
             saved = w.ATTRACT_FRAMES
             w.ATTRACT_FRAMES = [b"\x01" * w.FRAME_BYTES, w._ATTRACT_SILENCE]
             try:
-                sess = self._sess()
+                sess = self._sess(w.Config(dial_tone=False))
                 self.assertIsNone(sess.next_idle_frame())
                 sess.seized = True
                 self.assertEqual(sess.next_idle_frame(), b"\x01" * w.FRAME_BYTES)
@@ -1223,8 +1273,8 @@ class TrunkSeizeTests(unittest.TestCase):
             sess2 = self._sess(w.Config(seize_timeout=0.01))
             sess2.seized = True
             await w.seize_watchdog(sess2)           # returns, no raise
-            # timeout 0 = never
-            await w.seize_watchdog(self._sess(w.Config(seize_timeout=0)))
+            # timeout 0 and no hint = never: returns at once
+            await w.seize_watchdog(self._sess(w.Config(seize_timeout=0, seize_hint_s=0)))
 
         asyncio.run(scenario())
 
