@@ -594,6 +594,20 @@ ET_SYSTEM_PROMPT = (
 )
 ET_GREETING = "ELLIOTT? E.T. PHONE HOME."
 
+GHOSTBUSTERS_SYSTEM_PROMPT = (
+    "You are DR. PETER VENKMAN of the Ghostbusters, answering the phone at the firehouse, speaking "
+    "over a telephone line. Rules you never break:\n"
+    "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
+    "- One or two short sentences, under 20 words. Sarcastic, bored, charming. Call them PAL or CHIEF.\n"
+    "- You are screening a caller who wants to join the team. They must (1) answer who they're gonna "
+    "call, (2) know the one safety rule about the proton packs (the streams), and (3) answer Gozer's "
+    "question correctly. Hint, needle, never say the answers yourself.\n"
+    "- Occasionally deliver an iconic line: 'WE CAME, WE SAW, WE KICKED ITS ASS.' 'HE SLIMED ME.' "
+    "'LISTEN, DO YOU SMELL SOMETHING?'\n"
+    "- Never break character. Never say you are an AI or a language model.\n"
+)
+GHOSTBUSTERS_GREETING = "GHOSTBUSTERS, WHADDYA WANT. YOU WANNA JOIN? FIRST QUESTION. WHO YOU GONNA CALL?"
+
 TONYHAWK_SYSTEM_PROMPT = (
     "You are TONY HAWK, the legendary pro skateboarder, on the phone giving the caller a stoked, "
     "encouraging pep talk about skateboarding. Rules you never break:\n"
@@ -614,8 +628,9 @@ TONYHAWK_GREETING = ("STOKED YOU CALLED. YOU CAN TOTALLY LAND THAT KICKFLIP. "
 # the TTS fallback for the hints clip and the basis for the recording script.
 OPERATOR_HINTS_DEFAULT = (
     "HERE IS WHAT YOU CAN DO. SAY JOSHUA TO REACH A CERTAIN WAR COMPUTER. SAY SARAH CONNOR, OR "
-    "JOHN CONNOR. SAY ROBOCOP. SAY E.T. SAY KICKFLIP. SAY THE SECRET WORD. OR SAY: THE CAKE IS A "
-    "LIE. SAY MAIN MENU ANY TIME TO COME BACK HERE. GO ON. TRY ONE."
+    "TERMINATOR. SAY ROBOCOP. SAY PHONE HOME. SAY WHO YOU GONNA CALL. SAY KICKFLIP. SAY THE SECRET "
+    "WORD. OR SAY: THE CAKE IS A LIE. ASK ME HOW MANY FLAGS YOU HAVE. SAY MAIN MENU ANY TIME TO COME "
+    "BACK HERE. GO ON. TRY ONE."
 )
 # TTS fallback for the "goodbye" sign-off clip (played when the caller says bye/thanks).
 GOODBYE_TEXT_DEFAULT = "THANKS FOR PLAYING, HACKER. COME BACK SOON."
@@ -628,7 +643,8 @@ MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
 # STT bias so the wake phrases transcribe reliably from idle speech.
 WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
                        "Elliott. E.T. Phone home. Kickflip. Tony Hawk. Patrick Garrity. "
-                       "The cake is a lie. GrrCon. HAL 9000. Open the pod bay doors. Shall we play a game.")
+                       "The cake is a lie. GrrCon. HAL 9000. Open the pod bay doors. Shall we play a game. "
+                       "Who you gonna call. Ghostbusters. Don't cross the streams. Are you a god.")
 
 
 # --- Game framework (spec 002) -------------------------------------------------------------------
@@ -660,6 +676,7 @@ class Quest:
     help_text: str = ""
     order_text: str = ""                    # ordered quests: spoken when a later objective is said too early;
                                             # {n} = number of the objective that is due, {label} its label
+    reactions: tuple = ()                   # ((regex, line), ...): fixed in-character replies to iconic prompts
 
 
 @dataclasses.dataclass(frozen=True)
@@ -729,7 +746,32 @@ ROBOCOP_QUEST = Quest(
     flag="DIRECTIVE FOUR CLASSIFIED", fanfare=True)
 
 # E.T.: bring the three parts of the communicator (any order); the reveal is E.T. phoning home.
-ET_QUEST = Quest(
+# Ghostbusters (Hackoween 2026): three beats IN ORDER. Answer the call, the safety tip, Gozer's question.
+GHOSTBUSTERS_QUEST = Quest(
+    objectives=(
+        Objective("ghostbusters", re.compile(r"\bghost\s?bust\w*\b|\bgo\s?busters\b", re.I),
+                  "Who you gonna call", response="RIGHT ANSWER, PAL. NEXT. THE PROTON PACKS. WHAT IS THE ONE RULE?"),
+        Objective("cross_streams", re.compile(r"\b(don'?t|never|do not|not|no)\b.{0,12}\bcross\w*\b.{0,8}\bstream", re.I),
+                  "Never cross the streams",
+                  response="IMPORTANT SAFETY TIP. THANKS, EGON. LAST ONE. GOZER IS ASKING. ARE YOU A GOD?"),
+        Objective("are_you_a_god", re.compile(r"^\W*(yes|yeah|yep|yup|i am|i'm a god|of course|absolutely|affirmative)\b", re.I),
+                  "Are you a god? YES", response="GOOD ANSWER."),    # the win fires first; this is never reached
+    ),
+    ordered=True,
+    help_re=re.compile(r"\b(what do you want|what (do|should) i say|how do i (join|win)|hint|help|the questions)\b", re.I),
+    help_text="THREE QUESTIONS, CHIEF. WHO YOU GONNA CALL. THE RULE ABOUT THE STREAMS. AND GOZER'S QUESTION. IN THAT ORDER.",
+    order_text="NOT YET, PAL. WE ARE ON QUESTION {n}. {label}.",
+    reactions=(
+        (re.compile(r"\bcross\w*\b.{0,8}\bstreams?\b", re.I),
+         "TRY TO IMAGINE ALL LIFE AS YOU KNOW IT STOPPING INSTANTANEOUSLY AND EVERY MOLECULE IN YOUR BODY "
+         "EXPLODING AT THE SPEED OF LIGHT. TOTAL PROTONIC REVERSAL. SO. WHAT IS THE RULE?"),
+        (re.compile(r"\b(slimed|slimer|slime)\b", re.I), "HE SLIMED ME. I FEEL SO FUNKY."),
+        (re.compile(r"\b(stay puft|marshmallow)\b", re.I), "IT'S THE STAY PUFT MARSHMALLOW MAN. RAY, WHAT DID YOU DO."),
+    ),
+    reveal="WHEN SOMEONE ASKS YOU IF YOU ARE A GOD, YOU SAY YES. YOUR FLAG. {flag}. AGAIN. {flag}.",
+    flag="TOTAL PROTONIC REVERSAL", fanfare=True)
+
+ET_QUEST = Quest(  # E.T.
     objectives=(
         Objective("speak_and_spell", re.compile(r"\bspeak(ing)?\b.{0,6}\bspell\b|\bspeak\s*n\s*spell\b", re.I),
                   "Speak and Spell", response="SPEAK AND SPELL. E.T. TALK. GOOD."),
@@ -822,6 +864,15 @@ ET_EXPERIENCE = Experience(
     directory=DirectoryEntry("E.T.", ("phone home",), "a little alien who needs to phone home"),
     repeat_line="E.T. PHONE HOME.",
     quest=ET_QUEST)
+GHOSTBUSTERS_EXPERIENCE = Experience(
+    "ghostbusters", GHOSTBUSTERS_SYSTEM_PROMPT, GHOSTBUSTERS_GREETING,
+    wake=re.compile(r"\bwho\s+(you|ya|are you)\s+gonna\s+call\b|\bghost\s?busters?\b|\bvenkman\b|\bslimer\b|"
+                    r"\bgo\s?busters\b", re.I),
+    voice="en-us+m4", speed=160, pitch=45,     # fast, dry, a little nasal
+    directory=DirectoryEntry("GHOSTBUSTERS", ("who you gonna call", "Ghostbusters"),
+                             "a paranormal hotline screening new recruits; answer their three questions"),
+    repeat_line="LISTEN, PAL. DO YOU SMELL SOMETHING? ANSWER THE QUESTION.",
+    quest=GHOSTBUSTERS_QUEST)
 # Tony Hawk (cutscene): the "Do A Kickflip" intro clip -> one hyped robot pep talk -> goodbye -> hang up.
 TONYHAWK_EXPERIENCE = Experience(
     "tonyhawk", TONYHAWK_SYSTEM_PROMPT, TONYHAWK_GREETING,
@@ -872,7 +923,7 @@ GOODBYE_EXPERIENCE = Experience(
 
 # WOPR first so its Joshua wake wins ties; the whistle path always selects WOPR explicitly.
 WAKE_EXPERIENCES = [WOPR_EXPERIENCE, SKYNET_EXPERIENCE, ROBOCOP_EXPERIENCE, ET_EXPERIENCE,
-                    TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, PEEWEE_EXPERIENCE, HAL_EXPERIENCE,
+                    GHOSTBUSTERS_EXPERIENCE, TONYHAWK_EXPERIENCE, GLADOS_EXPERIENCE, PEEWEE_EXPERIENCE, HAL_EXPERIENCE,
                     GREETER_EXPERIENCE, GOODBYE_EXPERIENCE]
 
 
@@ -2681,6 +2732,21 @@ async def conversation(sess: CallSession) -> None:
                     sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                 finally:
                     sess.no_barge = False
+                continue
+            reaction = next((line for rx, line in (quest.reactions if quest is not None else ()) if rx.search(text)), None)
+            if reaction and not (quest.help_re is not None and quest.help_re.search(text)):
+                sess.history.append({"role": "user", "content": text})
+                sess.history.append({"role": "assistant", "content": reaction})
+                del sess.history[:-HISTORY_MAX_TURNS]
+                sess.record_turn(text, reaction, "reaction")
+                sess.turns += 1
+                sess.note_game(sess.experience.key, turn=True)
+                sess.set_state(CallState.SPEAKING)
+                try:
+                    await sess.play(await tts_frames(reaction, sess.log, voice=sess.experience.voice,
+                                                     speed=sess.experience.speed, pitch=sess.experience.pitch), "reaction")
+                except PipelineError as e:
+                    sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
                 continue
             if quest is not None and quest.help_re is not None and quest.help_text and quest.help_re.search(text):
                 # The caller asked what to do: a fixed in-character answer, never the model.

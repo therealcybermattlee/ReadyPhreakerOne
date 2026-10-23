@@ -565,11 +565,11 @@ class WakeExperienceTests(unittest.TestCase):
 
     def test_each_experience_has_distinct_voice_and_prompt(self):
         keys = [e.key for e in w.WAKE_EXPERIENCES]
-        self.assertEqual(keys, ["wopr", "skynet", "robocop", "et", "tonyhawk",
+        self.assertEqual(keys, ["wopr", "skynet", "robocop", "et", "ghostbusters", "tonyhawk",
                                 "glados", "peewee", "hal", "greeter", "goodbye"])
         convo = [e for e in w.WAKE_EXPERIENCES if e.archetype in ("chat", "quest")]  # WOPR + chats
         prompts = {e.system_prompt for e in convo}
-        self.assertEqual(len(prompts), 4, "wopr/skynet/robocop/et each have their own system prompt")
+        self.assertEqual(len(prompts), 5, "wopr/skynet/robocop/et/ghostbusters each have their own system prompt")
         self.assertTrue(all(e.greeting for e in convo))
 
     def test_glados_is_a_cutscene(self):
@@ -935,7 +935,7 @@ class QuestWinTests(unittest.TestCase):
             self.assertEqual(len(q.hit), 0, quest.flag)
 
     def test_every_shipped_quest_has_flag_reveal_and_feedback_lines(self):
-        for key in ("skynet", "robocop", "et"):
+        for key in ("skynet", "robocop", "et", "ghostbusters"):
             quest = self.by_key()[key].quest
             self.assertTrue(quest.flag, key)
             self.assertIn("{flag}", quest.reveal, key)
@@ -951,10 +951,10 @@ class QuestWinTests(unittest.TestCase):
         async def scenario():
             s = self._sess()
             n = sum(1 for e in w.WAKE_EXPERIENCES if e.quest)
-            self.assertEqual(n, 4)
+            self.assertEqual(n, 5)
             s.note_game("wopr", won=True)
             self.assertTrue(w.flag_tally(s).startswith(f"1 OF {n} FLAGS"))
-            for k in ("skynet", "robocop", "et"):
+            for k in ("skynet", "robocop", "et", "ghostbusters"):
                 s.note_game(k, won=True)
             self.assertTrue(w.flag_tally(s).startswith(f"ALL {n} FLAGS"))
 
@@ -1004,7 +1004,7 @@ class QuestWinTests(unittest.TestCase):
             self.assertEqual(s.quest.progress, "0/3")
             self.assertFalse(s.quest.unlocked)
             self.assertTrue(s.games["robocop"]["won"])
-            self.assertTrue(w.flag_tally(s).startswith("1 OF 4 FLAGS"))
+            self.assertTrue(w.flag_tally(s).startswith("1 OF 5 FLAGS"))
 
         asyncio.run(scenario())
 
@@ -1499,7 +1499,7 @@ class OperatorTests(unittest.TestCase):
 
     def test_directory_lists_only_listed_games(self):
         d = w.render_directory()
-        for name in ("WOPR", "SKYNET", "ROBOCOP", "E.T.", "TONY HAWK", "GLADOS", "THE SECRET WORD"):
+        for name in ("WOPR", "SKYNET", "ROBOCOP", "E.T.", "GHOSTBUSTERS", "TONY HAWK", "GLADOS", "THE SECRET WORD"):
             self.assertIn(name, d)
         self.assertNotIn("HAL", d)                    # easter egg
         self.assertNotIn("GRRCON", d.upper())         # the secret word itself never appears
@@ -1662,17 +1662,17 @@ class FifthFlagTests(unittest.TestCase):
         async def scenario():
             s = self._sess()
             self.assertIn("NO FLAGS YET", w.flag_report(s))
-            for k in ("wopr", "skynet", "robocop"):
+            for k in ("wopr", "skynet", "robocop", "ghostbusters"):
                 s.note_game(k, won=True)
-            self.assertTrue(w.flag_tally(s).startswith("3 OF 4 FLAGS"))
+            self.assertTrue(w.flag_tally(s).startswith("4 OF 5 FLAGS"))
             self.assertIn("FIFTH FLAG", w.flag_tally(s))                    # the incentive, one to go
-            self.assertIn("3 OF 4", w.flag_report(s)); self.assertNotIn("TEST MASTER", w.flag_report(s))
+            self.assertIn("4 OF 5", w.flag_report(s)); self.assertNotIn("TEST MASTER", w.flag_report(s))
             self.assertIn("ONE MORE AND THE FIFTH FLAG IS YOURS", w.flag_report(s))
             self.assertIn("ROBOCOP: DIRECTIVE FOUR CLASSIFIED", w.flag_report(s))
             self.assertIn("WOPR: JOSHUA FIVE BY FIVE", w.flag_report(s))
             s.note_game("et", won=True)
             t = w.flag_tally(s)
-            self.assertTrue(t.startswith("ALL 4 FLAGS")); self.assertEqual(t.count("TEST MASTER"), 2)
+            self.assertTrue(t.startswith("ALL 5 FLAGS")); self.assertEqual(t.count("TEST MASTER"), 2)
             self.assertIn("TEST MASTER", w.flag_report(s))
             for q in ["how many flags did I get?", "what's my score", "how am I doing"]:
                 self.assertTrue(w.FLAG_COUNT_RE.search(q), q)
@@ -1750,4 +1750,34 @@ class VenueTests(unittest.TestCase):
         finally:
             (w.VENUE, w.SECRET_WORD, w.PEEWEE_EXPERIENCE, clues, w.OPERATOR_EXPERIENCE, exps, w.WAKE_PROMPT_DEFAULT) = saved
             w.OPERATOR_CLUES = clues; w.WAKE_EXPERIENCES[:] = exps
+
+
+class GhostbustersTests(unittest.TestCase):
+    def test_wake_and_directory(self):
+        for t in ["who you gonna call", "Who ya gonna call?", "ghostbusters", "Ghost Busters!", "venkman"]:
+            self.assertEqual(w.match_experience(t).key, "ghostbusters", t)
+        self.assertEqual(w.validate_games(w.get_logger("test")), 0)
+        self.assertIn("GHOSTBUSTERS", w.render_directory())
+
+    def test_three_beats_in_order_and_the_god_question(self):
+        q = w.QuestState(quest=w.GHOSTBUSTERS_QUEST)
+        self.assertIsNone(q.update("yes"))                                   # not yet asked: nothing
+        self.assertIsNone(q.update("don't cross the streams"))               # out of order
+        self.assertEqual(q.out_of_order, "cross_streams")
+        self.assertEqual(q.update("Ghostbusters!"), "ghostbusters")
+        self.assertIsNone(q.update("let's cross the streams"))               # affirmative: a reaction, not a beat
+        self.assertEqual(q.update("never cross the streams"), "cross_streams")
+        self.assertEqual(q.update("Yes."), "are_you_a_god")
+        self.assertTrue(q.unlocked)
+        q2 = w.QuestState(quest=w.GHOSTBUSTERS_QUEST)
+        for t in ["ghost busters", "do not cross the streams", "yeah, I am a god"]:
+            q2.update(t)
+        self.assertTrue(q2.unlocked)
+
+    def test_reactions_and_help(self):
+        hits = [line for rx, line in w.GHOSTBUSTERS_QUEST.reactions if rx.search("let's cross the streams")]
+        self.assertTrue(hits and "PROTONIC REVERSAL" in hits[0])
+        self.assertTrue(w.GHOSTBUSTERS_QUEST.help_re.search("what do you want from me"))
+        self.assertIn("WHO YOU GONNA CALL", w.OPERATOR_HINTS_DEFAULT)
+        self.assertTrue(w.GHOSTBUSTERS_EXPERIENCE.directory.say[0] in "who you gonna call")
 
