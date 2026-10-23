@@ -638,7 +638,13 @@ GOODBYE_TEXT_DEFAULT = "THANKS FOR PLAYING, HACKER. COME BACK SOON."
 # The menu prompt the caller hears on pickup (idle attract, looped with a pause). Recorded WAV if
 # --menu-audio is set, else synthesized from this text.
 VENUE_DEFAULT = "GrrCon"            # the event; WOPR_VENUE. The secret word defaults to the venue's name.
-MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
+MENU_GREETING_TEMPLATE = "HELLO HACKER. WELCOME TO {venue}. HOW MAY I HELP YOU?"
+MENU_GREETING_DEFAULT = MENU_GREETING_TEMPLATE.format(venue=VENUE_DEFAULT.upper())
+
+
+def menu_greeting_for(venue: str) -> str:
+    """The synthesized greeting for a venue (what plays when no menu.wav is installed)."""
+    return MENU_GREETING_TEMPLATE.format(venue=venue.upper())
 
 # STT bias so the wake phrases transcribe reliably from idle speech.
 WAKE_PROMPT_DEFAULT = ("Joshua. Sarah Connor. John Connor. RoboCop. Murphy. Dead or alive. "
@@ -939,7 +945,7 @@ def build_operator() -> "Experience":
     return Experience(
         "operator",
         system_prompt=OPERATOR_PERSONA.format(venue=VENUE) + "\n" + render_directory() + "\n",
-        greeting=MENU_GREETING_DEFAULT,
+        greeting=menu_greeting_for(VENUE),
         voice=OPERATOR_VOICE_DEFAULT, speed=OPERATOR_SPEED_DEFAULT, pitch=OPERATOR_PITCH_DEFAULT,
         listed=False, idle_nudge_s=OPERATOR_NUDGE_S)
 
@@ -3224,6 +3230,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--stt-prompt", default=env.get("WOPR_STT_PROMPT", STT_PROMPT_DEFAULT), help="Whisper initial_prompt to bias transcription toward the game vocabulary")
     p.add_argument("--check", action="store_true", help="verify espeak-ng, Whisper, Ollama; print tunables; exit")
     a = p.parse_args(argv)
+    if a.menu_greeting == MENU_GREETING_DEFAULT:   # not overridden: follow the venue
+        a.menu_greeting = menu_greeting_for(a.venue)
     cfg = Config(bind=a.bind, port=a.port, log_level=a.log_level, stub_llm=a.stub_llm,
                  ollama_url=a.ollama_url.rstrip("/"), model=a.model, whisper_model=a.whisper_model,
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,

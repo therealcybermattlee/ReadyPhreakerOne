@@ -613,6 +613,13 @@ class WakeExperienceTests(unittest.TestCase):
             self.assertIsNotNone(m, f"{t!r} should match")
             self.assertEqual(m.key, "greeter", f"{t!r} -> {m.key}")
 
+    def test_menu_greeting_follows_the_venue(self):
+        c = w.parse_args(["--venue", "Hackoween"])
+        self.assertIn("WELCOME TO HACKOWEEN", c.menu_greeting)
+        self.assertNotIn("GRRCON", c.menu_greeting)
+        c = w.parse_args(["--venue", "Hackoween", "--menu-greeting", "BOO."])
+        self.assertEqual(c.menu_greeting, "BOO.")
+
     def test_menu_greeting_words_do_not_self_trigger_the_greeter(self):
         # the menu greeting bleeds into the mouthpiece; none of its words may summon the operator
         for t in ["how may i help you", "hello hacker", "i need help"]:
