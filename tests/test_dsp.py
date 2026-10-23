@@ -1720,3 +1720,34 @@ class SttConfidenceTests(unittest.TestCase):
         self.assertTrue(w.stt_accept(0.30, -0.60))      # ordinary phone-quality speech
         self.assertTrue(w.stt_accept(0.22, -0.95))      # a real, quiet "we'll play a game"
 
+
+class VenueTests(unittest.TestCase):
+    def test_default_venue_is_grrcon_with_its_tuned_matcher(self):
+        self.assertEqual(w.VENUE, "GrrCon")
+        self.assertIn("GrrCon payphone", w.OPERATOR_EXPERIENCE.system_prompt)
+        self.assertEqual(w.match_experience("grr con").key, "peewee")
+
+    def test_switching_venue_rewires_secret_word_clues_persona_and_prompt(self):
+        saved = (w.VENUE, w.SECRET_WORD, w.PEEWEE_EXPERIENCE, tuple(w.OPERATOR_CLUES), w.OPERATOR_EXPERIENCE,
+                 list(w.WAKE_EXPERIENCES), w.WAKE_PROMPT_DEFAULT)
+        try:
+            w.apply_venue("Hackoween")
+            self.assertEqual(w.SECRET_WORD, "Hackoween")
+            self.assertIn("Hackoween payphone", w.OPERATOR_EXPERIENCE.system_prompt)
+            for t in ["hackoween", "Hackoween!", "hack o ween", "hack-o-ween"]:
+                self.assertEqual(w.match_experience(t).key, "peewee", t)
+            self.assertIsNone(w.match_experience("grr con"), "the old word no longer works")
+            self.assertEqual(w.OPERATOR_CLUES, w.OPERATOR_CLUES_GENERIC)
+            self.assertIn("Hackoween", w.WAKE_PROMPT_DEFAULT)
+            # the filter now blocks the new word, not the old
+            out, removed = w.operator_filter("THE WORD IS HACKOWEEN.")
+            self.assertEqual(out, w.OPERATOR_BRUSHOFF)
+            # custom word, matcher and clues
+            w.apply_venue("Hackoween", "pumpkin", r"\bpump?kin\b", ("CLUE ONE.", "CLUE TWO."))
+            self.assertEqual(w.match_experience("pumkin").key, "peewee")
+            self.assertEqual(w.OPERATOR_CLUES, ("CLUE ONE.", "CLUE TWO."))
+            self.assertTrue(w.parse_args(["--venue", "X"]).venue == "X")
+        finally:
+            (w.VENUE, w.SECRET_WORD, w.PEEWEE_EXPERIENCE, clues, w.OPERATOR_EXPERIENCE, exps, w.WAKE_PROMPT_DEFAULT) = saved
+            w.OPERATOR_CLUES = clues; w.WAKE_EXPERIENCES[:] = exps
+

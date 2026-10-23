@@ -622,6 +622,7 @@ GOODBYE_TEXT_DEFAULT = "THANKS FOR PLAYING, HACKER. COME BACK SOON."
 
 # The menu prompt the caller hears on pickup (idle attract, looped with a pause). Recorded WAV if
 # --menu-audio is set, else synthesized from this text.
+VENUE_DEFAULT = "GrrCon"            # the event; WOPR_VENUE. The secret word defaults to the venue's name.
 MENU_GREETING_DEFAULT = ("HELLO HACKER. WELCOME TO GRRCON. HOW MAY I HELP YOU?")
 
 # STT bias so the wake phrases transcribe reliably from idle speech.
@@ -886,7 +887,7 @@ OPERATOR_EXPERIENCE: "Experience | None" = None
 def build_operator() -> "Experience":
     return Experience(
         "operator",
-        system_prompt=OPERATOR_PERSONA + "\n" + render_directory() + "\n",
+        system_prompt=OPERATOR_PERSONA.format(venue=VENUE) + "\n" + render_directory() + "\n",
         greeting=MENU_GREETING_DEFAULT,
         voice=OPERATOR_VOICE_DEFAULT, speed=OPERATOR_SPEED_DEFAULT, pitch=OPERATOR_PITCH_DEFAULT,
         listed=False, idle_nudge_s=OPERATOR_NUDGE_S)
@@ -972,7 +973,7 @@ def validate_games(log) -> int:
 # Everything she says is post-filtered (operator_filter): no easter-egg or invented names, never the
 # secret word. Clues, "list the options", and "main menu" are handled without the model.
 OPERATOR_PERSONA = (
-    "You are the OPERATOR on a 1970s long-distance switchboard at the GrrCon payphone. The caller has "
+    "You are the OPERATOR on a 1970s long-distance switchboard at the {venue} payphone. The caller has "
     "just seized your trunk with a whistle. Rules you never break:\n"
     "- Reply in ALL CAPITAL LETTERS. Plain text only. No markdown, no emoji, no stage directions.\n"
     "- At most two short sentences, under 20 words total. Brisk, dry, a little world-weary. Address "
@@ -992,6 +993,12 @@ OPERATOR_CLUES = (
     "HERE IS YOUR FIRST CLUE. IT IS THE NAME OF THE PLACE YOU ARE STANDING IN.",
     "SECOND CLUE. SAY IT LIKE A BEAR WOULD, WITH A GROWL UP FRONT.",
     "LAST CLUE. IT IS ON YOUR BADGE. TWO SYLLABLES. GRR, THEN THE CON.",
+)
+# Clues for any other venue whose secret word is its own name (override with WOPR_SECRET_CLUES, '|'-separated).
+OPERATOR_CLUES_GENERIC = (
+    "HERE IS YOUR FIRST CLUE. IT IS THE NAME OF THE EVENT YOU ARE STANDING IN.",
+    "SECOND CLUE. IT IS PRINTED ON YOUR BADGE, AND ON THE DOOR YOU CAME IN THROUGH.",
+    "LAST CLUE. JUST SAY THE EVENT'S NAME. NOTHING ELSE. SAY IT LIKE YOU MEAN IT.",
 )
 OPERATOR_CLUES_EXHAUSTED = "THAT IS ALL THE CLUES I HAVE. GROWL IT AT ME AND SEE WHAT HAPPENS."
 OPERATOR_NUDGES = (
@@ -1101,6 +1108,42 @@ def fuzzy_experience(text: str) -> "Experience | None":
 def operator_available(cfg) -> bool:
     """The live Operator needs the model and STT; otherwise the recorded menu loop hosts the call."""
     return bool(cfg.enable_operator and not cfg.stub_llm and not cfg.no_stt and LLM_WARM_OK)
+
+
+VENUE = VENUE_DEFAULT
+SECRET_WORD = VENUE_DEFAULT
+
+
+def secret_word_regex(word: str) -> "re.Pattern":
+    """A tolerant matcher for a spoken secret word: the word itself, and the word with optional
+    spaces/hyphens between its letters (Whisper splits unfamiliar names: 'hack o ween'). Observed
+    mishears belong in WOPR_SECRET_WORD_RE once a real call shows them."""
+    letters = [re.escape(ch) for ch in word.lower() if ch.isalnum()]
+    loose = r"[\s-]?".join(letters)
+    return re.compile(r"\b" + re.escape(word.lower()) + r"\b|\b" + loose + r"\b", re.I)
+
+
+def apply_venue(venue: str, secret_word: str | None = None, secret_re: str | None = None,
+                clues: "tuple | None" = None) -> None:
+    """Point everything venue-specific at this event: the Operator's persona, the secret word's
+    wake matcher (the Pee-wee cutscene), the clues, and the recognizer's word list. GrrCon keeps
+    its hand-tuned matcher and clues; any other venue gets a generated matcher and generic clues
+    unless WOPR_SECRET_WORD_RE / WOPR_SECRET_CLUES say otherwise."""
+    global VENUE, SECRET_WORD, PEEWEE_EXPERIENCE, OPERATOR_CLUES, OPERATOR_EXPERIENCE, WAKE_PROMPT_DEFAULT
+    VENUE = venue
+    SECRET_WORD = secret_word or venue
+    if SECRET_WORD.lower() != VENUE_DEFAULT.lower() or secret_re:
+        rx = re.compile(secret_re, re.I) if secret_re else secret_word_regex(SECRET_WORD)
+        PEEWEE_EXPERIENCE = dataclasses.replace(PEEWEE_EXPERIENCE, wake=rx)
+        for i, e in enumerate(WAKE_EXPERIENCES):
+            if e.key == "peewee":
+                WAKE_EXPERIENCES[i] = PEEWEE_EXPERIENCE
+        OPERATOR_CLUES = tuple(clues) if clues else OPERATOR_CLUES_GENERIC
+    elif clues:
+        OPERATOR_CLUES = tuple(clues)
+    if SECRET_WORD not in WAKE_PROMPT_DEFAULT:
+        WAKE_PROMPT_DEFAULT = WAKE_PROMPT_DEFAULT + f" {SECRET_WORD}. {venue}."
+    OPERATOR_EXPERIENCE = build_operator()
 
 
 OPERATOR_EXPERIENCE = build_operator()
@@ -1740,6 +1783,10 @@ class Config:
     enable_seize: bool = True               # the line is dead until 2600 Hz seizes the trunk (the gate)
     seize_timeout: float = 90.0             # hang up an un-seized line after this many seconds (0 = never)
     whistle_once: bool = True               # after the seize, stop listening for the whistle (voice only)
+    venue: str = VENUE_DEFAULT              # the event name (Operator persona; default secret word)
+    secret_word: str = ""                   # "" = the venue name
+    secret_word_re: str = ""                # override matcher (regex) once real calls show the mishears
+    secret_clues: str = ""                  # '|'-separated clue lines; "" = GrrCon's or the generic set
     dial_tone: bool = True                  # an un-seized line plays a dial tone instead of dead silence
     seize_hint_s: float = 30.0              # after this long un-seized, speak the hint (then every interval)
     seize_hint: str = SEIZE_HINT_DEFAULT
@@ -3080,6 +3127,10 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-wake", action="store_true", default=env.get("WOPR_NO_WAKE", "") in ("1", "true", "yes"), help="disable listening for character wake phrases during the attract loop")
     p.add_argument("--no-seize", action="store_true", default=env.get("WOPR_NO_SEIZE", "") in ("1", "true", "yes"), help="disable the 2600 Hz gate: play the menu on pickup instead of a dead line")
     p.add_argument("--seize-timeout", type=float, default=float(env.get("WOPR_SEIZE_TIMEOUT", "90")), help="seconds to hold a dead (un-whistled) line before hanging up; 0 = never")
+    p.add_argument("--venue", default=env.get("WOPR_VENUE", VENUE_DEFAULT), help="event name: Operator persona, and the default secret word")
+    p.add_argument("--secret-word", default=env.get("WOPR_SECRET_WORD", ""), help="the secret word (default: the venue name)")
+    p.add_argument("--secret-word-re", default=env.get("WOPR_SECRET_WORD_RE", ""), help="regex that matches the secret word as Whisper hears it (default: generated)")
+    p.add_argument("--secret-clues", default=env.get("WOPR_SECRET_CLUES", ""), help="'|'-separated clue lines the Operator gives, in order")
     p.add_argument("--no-dial-tone", action="store_true", default=env.get("WOPR_DIAL_TONE", "1") in ("0", "false", "no"), help="dead silence before the whistle instead of a dial tone")
     p.add_argument("--seize-hint-s", type=float, default=float(env.get("WOPR_SEIZE_HINT_S", "30")), help="seconds of no whistle before the hint is spoken (repeats each interval); 0 = never")
     p.add_argument("--seize-hint", default=env.get("WOPR_SEIZE_HINT", SEIZE_HINT_DEFAULT), help="what is said over the dial tone to a caller who has not whistled")
@@ -3112,6 +3163,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
                  enable_seize=not a.no_seize, seize_timeout=a.seize_timeout, whistle_once=not a.whistle_always,
                  dial_tone=not a.no_dial_tone, seize_hint_s=a.seize_hint_s, seize_hint=a.seize_hint,
+                 venue=a.venue, secret_word=a.secret_word, secret_word_re=a.secret_word_re, secret_clues=a.secret_clues,
                  enable_operator=not a.no_operator, operator_voice=a.operator_voice,
                  operator_speed=a.operator_speed, operator_pitch=a.operator_pitch,
                  operator_reply_budget_s=a.operator_budget,
@@ -3143,6 +3195,9 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
+    apply_venue(cfg.venue, cfg.secret_word or None, cfg.secret_word_re or None,
+                tuple(c.strip() for c in cfg.secret_clues.split("|") if c.strip()) or None)
+    log.info(kv(event="venue", venue=VENUE, secret_word_len=len(SECRET_WORD), clues=len(OPERATOR_CLUES)))
     games = [e.key for e in WAKE_EXPERIENCES if is_game(e.key)]
     log.info(kv(event="games", n=len(games), roster=",".join(f"{e.key}:{e.archetype}"
                                                              for e in WAKE_EXPERIENCES if is_game(e.key))))
