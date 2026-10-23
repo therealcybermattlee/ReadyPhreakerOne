@@ -1734,6 +1734,15 @@ class VenueTests(unittest.TestCase):
         self.assertIn("GrrCon payphone", w.OPERATOR_EXPERIENCE.system_prompt)
         self.assertEqual(w.match_experience("grr con").key, "peewee")
 
+    def test_hackoween_secret_word_matcher_takes_the_mishears_and_not_hacker(self):
+        rx = w.secret_word_regex("Hackoween")
+        for heard in ("hackoween", "Hack o ween", "hackooine", "hacko wean", "hack a ween",
+                      "hack o'ween", "hack a win", "the secret word is hack-o-ween"):
+            self.assertTrue(rx.search(heard), heard)
+        for heard in ("halloween", "hacker", "hacking", "hack the planet", "hack on", "hack in",
+                      "hackathon", "hack it"):
+            self.assertFalse(rx.search(heard), heard)
+
     def test_switching_venue_rewires_secret_word_clues_persona_and_prompt(self):
         saved = (w.VENUE, w.SECRET_WORD, w.PEEWEE_EXPERIENCE, tuple(w.OPERATOR_CLUES), w.OPERATOR_EXPERIENCE,
                  list(w.WAKE_EXPERIENCES), w.WAKE_PROMPT_DEFAULT)

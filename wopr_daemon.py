@@ -1171,10 +1171,23 @@ VENUE = VENUE_DEFAULT
 SECRET_WORD = VENUE_DEFAULT
 
 
+# Hand-tuned matchers for secret words we have heard the recognizer mangle. "Hackoween" came back
+# as "Hackooine" from a clean studio take; on a con floor expect "hack a ween", "hacko wean",
+# "hack o'ween", "hack a win". Not "halloween", "hacker", "hacking", "hack on", "hack in".
+TUNED_SECRET_RES = {
+    "hackoween": re.compile(
+        r"\bhackoween\b|\bhack[\s'-]*(?:[aeiou]+[\s'-]*)?(?:w[aeiou]+ne?|[aeiou]*oine?|ween|wean|wine|win)\b",
+        re.I),
+}
+
+
 def secret_word_regex(word: str) -> "re.Pattern":
-    """A tolerant matcher for a spoken secret word: the word itself, and the word with optional
-    spaces/hyphens between its letters (Whisper splits unfamiliar names: 'hack o ween'). Observed
-    mishears belong in WOPR_SECRET_WORD_RE once a real call shows them."""
+    """A tolerant matcher for a spoken secret word: a hand-tuned one if we have it, else the word
+    itself and the word with optional spaces/hyphens between its letters (Whisper splits unfamiliar
+    names: 'hack o ween'). Observed mishears belong in WOPR_SECRET_WORD_RE once a real call shows them."""
+    tuned = TUNED_SECRET_RES.get(word.lower())
+    if tuned:
+        return tuned
     letters = [re.escape(ch) for ch in word.lower() if ch.isalnum()]
     loose = r"[\s-]?".join(letters)
     return re.compile(r"\b" + re.escape(word.lower()) + r"\b|\b" + loose + r"\b", re.I)
