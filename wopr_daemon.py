@@ -1173,10 +1173,13 @@ SECRET_WORD = VENUE_DEFAULT
 
 # Hand-tuned matchers for secret words we have heard the recognizer mangle. "Hackoween" came back
 # as "Hackooine" from a clean studio take; on a con floor expect "hack a ween", "hacko wean",
-# "hack o'ween", "hack a win". Not "halloween", "hacker", "hacking", "hack on", "hack in".
+# "hack o'ween", "hack a win", and plain "Halloween" (the recognizer's favourite: a studio take came
+# back as "Halloween" once in two tries, and the cutscene carries no flag, so a guess costs nothing).
+# Not "hacker", "hacking", "hack on", "hack in".
 TUNED_SECRET_RES = {
     "hackoween": re.compile(
-        r"\bhackoween\b|\bhack[\s'-]*(?:[aeiou]+[\s'-]*)?(?:w[aeiou]+ne?|[aeiou]*oine?|ween|wean|wine|win)\b",
+        r"\bhackoween\b|\bhack[\s'-]*(?:[aeiou]+[\s'-]*)?(?:w[aeiou]+ne?|[aeiou]*oine?|ween|wean|wine|win)\b"
+        r"|\bhall?o[\s'-]*ween\b|\bhollow[\s'-]*ween\b",
         re.I),
 }
 
