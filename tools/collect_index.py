@@ -18,7 +18,7 @@ LOG_RE = re.compile(r"^(\S+) (INFO|WARNING|ERROR) call=([0-9a-f]+|-) (.*)$")
 KV_RE = re.compile(r'(\w+)=("[^"]*"|\S+)')
 REC_RE = re.compile(r"^(\d{8}-\d{6})-(\d+)\.(\d+)(-caller)?\.wav$")
 GAME_LABEL = {"wopr": "WOPR", "skynet": "Skynet", "robocop": "RoboCop", "et": "E.T.", "tonyhawk": "Tony Hawk",
-              "glados": "GLaDOS", "peewee": "Pee-wee", "hal": "HAL", "operator": "Operator", "greeter": "hints",
+              "glados": "GLaDOS", "peewee": "Pee-wee", "hal": "HAL", "ghostbusters": "Ghostbusters", "operator": "Operator", "greeter": "hints",
               "goodbye": "goodbye"}
 
 
@@ -122,6 +122,7 @@ def match_recording(recs: dict, epoch: int | None) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
+    ap.add_argument("--since", help="keep only calls on or after this local date (YYYY-MM-DD), e.g. the event day")
     a = ap.parse_args()
     root = a.root
     log = load_log(os.path.join(root, "logs", "wopr.log"))
@@ -147,7 +148,7 @@ def main() -> int:
             "whistle_hz": lg.get("whistle_hz") or "",
             "games": " > ".join(GAME_LABEL.get(k, k) for k in games),
             "flags": " ".join(GAME_LABEL.get(k, k) for k in flags), "n_flags": len(flags),
-            "fifth_flag": "YES" if lg.get("master") else "",
+            "master_flag": "YES" if lg.get("master") else "",
             "turns": s.get("turns", 0), "operator_turns": ops,
             "bargeins": lg.get("bargeins", 0), "menu_returns": lg.get("menu_returns", 0),
             "stt_rejected": lg.get("stt_rejected", 0),
@@ -155,6 +156,8 @@ def main() -> int:
             "recording": rec.get("mixed", ""), "caller_leg": rec.get("caller", ""),
             "_sort": start,
         })
+    if a.since:
+        rows = [r for r in rows if r["date"] >= a.since]
     rows.sort(key=lambda r: r["_sort"])
 
     fields = [k for k in rows[0].keys() if not k.startswith("_")] if rows else []
@@ -173,23 +176,23 @@ def main() -> int:
             rs = by_day[day]
             nflags = sum(r["n_flags"] for r in rs)
             f.write(f"## {day} — {len(rs)} calls, {sum(1 for r in rs if r['whistled']=='yes')} whistled, "
-                    f"{nflags} flags, {sum(1 for r in rs if r['fifth_flag'])} fifth flags\n\n")
+                    f"{nflags} flags, {sum(1 for r in rs if r['master_flag'])} master flags\n\n")
             f.write("| start | dur | whistle | path | flags | 5th | turns | op | recording |\n|---|---|---|---|---|---|---|---|---|\n")
             for r in rs:
                 dur = f"{r['duration_s']//60}:{r['duration_s']%60:02d}"
                 f.write(f"| {r['start_local']} | {dur} | {r['whistle_hz'] or ('yes' if r['whistled']=='yes' else '-')} | "
-                        f"{r['games'] or '-'} | {r['flags'] or '-'} | {r['fifth_flag'] or ''} | {r['turns']} | {r['operator_turns']} | "
+                        f"{r['games'] or '-'} | {r['flags'] or '-'} | {r['master_flag'] or ''} | {r['turns']} | {r['operator_turns']} | "
                         f"`{r['recording'] or '-'}` |\n")
             f.write("\n")
 
     with open(os.path.join(root, "DAILY.md"), "w", encoding="utf-8") as f:
-        f.write("# Daily summary\n\n| day | calls | whistled | reached a game | flags | fifth flags | longest | total talk time |\n|---|---|---|---|---|---|---|---|\n")
+        f.write("# Daily summary\n\n| day | calls | whistled | reached a game | flags | master flags | longest | total talk time |\n|---|---|---|---|---|---|---|---|\n")
         for day in sorted(by_day):
             rs = by_day[day]
             longest = max(rs, key=lambda r: r["duration_s"])
             tot = sum(r["duration_s"] for r in rs)
             f.write(f"| {day} | {len(rs)} | {sum(1 for r in rs if r['whistled']=='yes')} | {sum(1 for r in rs if r['games'])} | "
-                    f"{sum(r['n_flags'] for r in rs)} | {sum(1 for r in rs if r['fifth_flag'])} | "
+                    f"{sum(r['n_flags'] for r in rs)} | {sum(1 for r in rs if r['master_flag'])} | "
                     f"{longest['duration_s']//60}:{longest['duration_s']%60:02d} ({longest['call']}) | {tot//3600}h{(tot%3600)//60:02d}m |\n")
         f.write("\n## Flags by game\n\n")
         cnt = Counter(k for r in rows for k in r["flags"].split() if k)
@@ -231,7 +234,7 @@ id; they are matched by time: the Asterisk epoch in the file name equals the `ca
 `CALLS.csv` has that join done.
 """)
     print(f"{len(rows)} calls indexed; {sum(1 for r in rows if r['recording'])} matched to a recording; "
-          f"{sum(r['n_flags'] for r in rows)} flags; {sum(1 for r in rows if r['fifth_flag'])} fifth flags")
+          f"{sum(r['n_flags'] for r in rows)} flags; {sum(1 for r in rows if r['master_flag'])} master flags")
     return 0
 
 
