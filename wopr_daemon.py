@@ -606,7 +606,7 @@ GHOSTBUSTERS_SYSTEM_PROMPT = (
     "'LISTEN, DO YOU SMELL SOMETHING?'\n"
     "- Never break character. Never say you are an AI or a language model.\n"
 )
-GHOSTBUSTERS_GREETING = "GHOSTBUSTERS, WHADDYA WANT. YOU WANNA JOIN? FIRST QUESTION. WHO YOU GONNA CALL?"
+GHOSTBUSTERS_GREETING = "GHOSTBUSTERS. WHAT DO YOU WANT. YOU WANT IN? FIRST QUESTION. WHO. YOU. GONNA. CALL?"
 
 TONYHAWK_SYSTEM_PROMPT = (
     "You are TONY HAWK, the legendary pro skateboarder, on the phone giving the caller a stoked, "
