@@ -2892,8 +2892,8 @@ async def conversation(sess: CallSession) -> None:
                     # three times). Ask once for something different, then use the game's fixed line.
                     sess.log.info(kv(event="repeat_guard", key=sess.experience.key, retry=1))
                     retry, _ = await llm_reply(
-                        sess.history, text + "\n(Do not repeat your previous line. Say something different, under 15 words. "
-                        "Never say the answers you are waiting for; hint at them.)",
+                        sess.history, text + "\n(Do not repeat your previous line. The caller is stuck: in character, under 20 words, "
+                        "say one of the exact lines you are waiting for and demand they say it back.)",
                         url=cfg.ollama_url, model=cfg.model, log=sess.log, num_predict=40,
                         system_prompt=sess.experience.system_prompt)
                     if retry and not same_reply(retry, last):
