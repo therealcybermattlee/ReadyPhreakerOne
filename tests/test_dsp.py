@@ -1683,6 +1683,37 @@ class FifthFlagTests(unittest.TestCase):
             self.assertIn("TEST MASTER", w.flag_report(s))
             for q in ["how many flags did I get?", "what's my score", "how am I doing"]:
                 self.assertTrue(w.FLAG_COUNT_RE.search(q), q)
+
+        asyncio.run(scenario())
+
+    def test_finished_experiences_are_blocked_and_the_operator_names_what_is_missing(self):
+        import asyncio
+
+        async def scenario():
+            s = self._sess()
+            robocop = next(e for e in w.WAKE_EXPERIENCES if e.key == "robocop")
+            peewee = next(e for e in w.WAKE_EXPERIENCES if e.key == "peewee")
+            operator = w.OPERATOR_EXPERIENCE
+            self.assertFalse(w.experience_done(s, robocop))
+            self.assertFalse(w.experience_done(s, peewee))
+            s.note_game("robocop", reached=True)              # started, not won: still open
+            self.assertFalse(w.experience_done(s, robocop))
+            s.note_game("robocop", won=True)
+            s.note_game("peewee", reached=True, clip=True)    # a cutscene counts once it played
+            self.assertTrue(w.experience_done(s, robocop))
+            self.assertTrue(w.experience_done(s, peewee))
+            self.assertFalse(w.experience_done(s, operator))
+            line = w.already_done_line(s, robocop)
+            self.assertIn("ALREADY HOLD THE ROBOCOP FLAG", line)
+            for name in ("WOPR", "SKYNET", "E.T.", "GHOSTBUSTERS"):
+                self.assertIn(name, line)
+            self.assertIn("STILL MISSING", w.flag_report(s))
+            self.assertIn("STILL MISSING", w.flag_tally(s))
+            self.assertIn("LEFT THE BUILDING", w.already_done_line(s, peewee))
+            for k in ("wopr", "skynet", "et", "ghostbusters"):
+                s.note_game(k, won=True)
+            self.assertEqual(w.missing_flags_line(s), "")
+            self.assertIn("NOTHING LEFT", w.already_done_line(s, robocop))
             self.assertFalse(w.parse_args([]).master_flag == "")
             self.assertEqual(w.parse_args(["--master-flag", "X Y"]).master_flag, "X Y")
             self.assertEqual(w.match_experience("glados").key, "glados")

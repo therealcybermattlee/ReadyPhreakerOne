@@ -972,8 +972,8 @@ def flag_tally(sess) -> str:
         sess.log.info(kv(event="master_flag", flag=m))
         return f"ALL {n} FLAGS. YOU BEAT THEM ALL. YOUR FINAL FLAG. {m}. AGAIN. {m}. SAY GOODBYE, OR PLAY AGAIN."
     if won == n - 1:
-        return f"{won} OF {n} FLAGS. ONE MORE AND YOU EARN A FIFTH FLAG NOBODY ELSE HAS. SAY A NAME."
-    return f"{won} OF {n} FLAGS. WIN THEM ALL FOR A FIFTH. SAY A NAME, MAIN MENU, OR GOODBYE."
+        return f"{won} OF {n} FLAGS. ONE MORE AND YOU EARN A FIFTH FLAG NOBODY ELSE HAS. {missing_flags_line(sess)}"
+    return f"{won} OF {n} FLAGS. WIN THEM ALL FOR A FIFTH. {missing_flags_line(sess)} SAY A NAME."
 
 
 def flag_report(sess) -> str:
@@ -994,7 +994,47 @@ def flag_report(sess) -> str:
     left = n - won
     push = ("ONE MORE AND THE FIFTH FLAG IS YOURS." if left == 1
             else f"{left} TO GO. WIN THEM ALL AND THERE IS A FIFTH FLAG.")
-    return f"YOU HOLD {won} OF {n} FLAGS. {lines}. {push}"
+    return f"YOU HOLD {won} OF {n} FLAGS. {lines}. {push} {missing_flags_line(sess)}"
+
+
+def experience_done(sess, exp: "Experience") -> bool:
+    """True once this call has finished the experience: a quest whose flag was won, or a cutscene
+    that already played. The Operator, the hints greeter and goodbye are never 'done'."""
+    g = sess.games.get(exp.key) or {}
+    if exp.quest:
+        return bool(g.get("won"))
+    if exp.cutscene and not exp.cutscene.end_call and exp.key not in ("greeter", "operator"):
+        return bool(g.get("reached"))
+    return False
+
+
+def experience_name(exp: "Experience") -> str:
+    return exp.directory.name if exp.directory else exp.key.upper()
+
+
+def missing_flags_line(sess) -> str:
+    """The Operator's taunt: which quests this call has not won yet, by name ('' when none)."""
+    left = [experience_name(e) for e in WAKE_EXPERIENCES
+            if e.quest and not sess.games.get(e.key, {}).get("won")]
+    if not left:
+        return ""
+    if len(left) == 1:
+        return f"ONLY {left[0]} STANDS BETWEEN YOU AND THE FINAL FLAG."
+    return "STILL MISSING: " + ", ".join(left[:-1]) + f", AND {left[-1]}."
+
+
+def already_done_line(sess, exp: "Experience") -> str:
+    """What the Operator says when a caller asks for something they already finished this call."""
+    name = experience_name(exp)
+    if exp.quest:
+        head = f"YOU ALREADY HOLD THE {name} FLAG. NO REPEATS."
+    else:
+        head = f"{name} HAS LEFT THE BUILDING. ONCE PER CALL."
+    tail = missing_flags_line(sess)
+    if not tail:
+        won, n = flags_won(sess)
+        tail = f"YOU HOLD ALL {n} FLAGS. THERE IS NOTHING LEFT. SAY GOODBYE, HACKER." if won >= n else ""
+    return (head + " " + tail).strip()
 
 
 def validate_games(log) -> int:
@@ -2578,6 +2618,19 @@ async def conversation(sess: CallSession) -> None:
                     pass
                 return   # brain_task -> ARMED -> the menu; earned flags persist for the call
             target = match_experience(text) or (fuzzy_experience(text) if is_operator else None)
+            if target is not None and experience_done(sess, target):
+                # Finished this call already: no repeats. The Operator says so and names what is left.
+                line = already_done_line(sess, target)
+                sess.log.info(kv(event="already_done", key=target.key, text=text))
+                sess.record_turn(text, line, "operator")
+                try:
+                    sess.set_state(CallState.SPEAKING)
+                    await sess.play(await tts_frames(line, sess.log, voice=cfg.operator_voice,
+                                                     speed=cfg.operator_speed, pitch=cfg.operator_pitch),
+                                    "already_done")
+                except PipelineError as e:
+                    sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+                continue
             if target is not None and target.key != sess.experience.key:
                 # Arcade: another character's name (or operator / goodbye) said mid-game switches
                 # straight to it — the flag tally promises "say another name".
@@ -2896,6 +2949,9 @@ async def idle_listener_task(sess: CallSession) -> None:
             continue
         exp = match_experience(text)
         sess.log.info(kv(event="wake_listen", text=text, match=exp.key if exp else "-"))
+        if exp and experience_done(sess, exp):
+            sess.log.info(kv(event="already_done", key=exp.key, text=text))
+            continue
         if exp and sess.state is CallState.ARMED:
             sess.experience = exp
             sess.log.info(kv(event="wake", experience=exp.key, text=text))
