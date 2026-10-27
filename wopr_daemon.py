@@ -1122,7 +1122,8 @@ FLAG_REPEAT_RE = re.compile(r"\b((what|say|repeat|tell me|read)\b.{0,25}\bflag|f
 FLAG_COUNT_RE = re.compile(r"\b(how many flags|my flags|flags (do|did) i|flag count|my score|what.s my score|"
                            r"how am i doing|how many (have|did) i)\b", re.I)
 LIST_OPTIONS_RE = re.compile(r"\b(list|options|what can i (say|do)|who (is|else is) (on|here)|choices|menu of|"
-                             r"play a game|a game|games|what games)\b", re.I)
+                             r"play a game|a game|games|what games|who (can|could|do|should) i (call|reach|talk to|"
+                             r"speak to|ask for)|who (do|have) you (got|have)|who.?s (available|there|here))\b", re.I)
 
 
 def listed_games() -> list:
@@ -2891,7 +2892,8 @@ async def conversation(sess: CallSession) -> None:
                     # three times). Ask once for something different, then use the game's fixed line.
                     sess.log.info(kv(event="repeat_guard", key=sess.experience.key, retry=1))
                     retry, _ = await llm_reply(
-                        sess.history, text + "\n(Do not repeat your previous line. Say something different, under 15 words.)",
+                        sess.history, text + "\n(Do not repeat your previous line. Say something different, under 15 words. "
+                        "Never say the answers you are waiting for; hint at them.)",
                         url=cfg.ollama_url, model=cfg.model, log=sess.log, num_predict=40,
                         system_prompt=sess.experience.system_prompt)
                     if retry and not same_reply(retry, last):

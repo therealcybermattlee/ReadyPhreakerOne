@@ -1494,6 +1494,12 @@ class HalCutsceneTests(unittest.TestCase):
 
 
 class OperatorTests(unittest.TestCase):
+    def test_who_can_i_call_plays_the_hints(self):
+        for q in ("Who can I call.", "who could I talk to", "who do you have", "who's available", "who is on the line"):
+            self.assertTrue(w.LIST_OPTIONS_RE.search(q), q)
+        for q in ("call Sarah Connor", "who are you"):
+            self.assertFalse(w.LIST_OPTIONS_RE.search(q), q)
+
     """Spec 003: the switchboard Operator — directory, easter eggs, filter, clues, availability."""
 
     def _sess(self, cfg=None):
