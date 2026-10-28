@@ -48,7 +48,7 @@
 - **Each character wants to hear certain things.** They will not tell you what. Ask them what they want and listen. If you know the movie, you know the lines.
 - **Talk over anything and it stops.** You do not have to wait.
 - **Ask the Operator how you are doing.** She keeps count and repeats your flags.
-- **Stuck?** Find a human wearing the project badge. Hints are free. Answers cost.
+- **Stuck?** Hints are free. Answers are in the back if you want to cheat :) lol
 
 ## WHAT COUNTS
 
