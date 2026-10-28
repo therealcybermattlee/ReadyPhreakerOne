@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hackoween Phone Book</title>
+<style>
+  @page { size: letter; margin: 0.6in; }
+  :root { --ink:#111; --dim:#555; --rule:#999; --paper:#fff; }
+  html, body { background: var(--paper); color: var(--ink); }
+  body { font-family: Georgia, "Times New Roman", serif; font-size: 12.5pt; line-height: 1.35; margin: 0; }
+  .page { page-break-after: always; padding: 0 0 1em 0; max-width: 7.3in; margin: 0 auto 2em auto; }
+  .page:last-child { page-break-after: auto; }
+  h1, h2, h3 { font-family: "Courier New", Courier, monospace; letter-spacing: .04em; margin: 0 0 .3em 0; }
+  h1 { font-size: 30pt; text-transform: uppercase; }
+  h2 { font-size: 18pt; text-transform: uppercase; border-bottom: 2px solid var(--ink); padding-bottom: .15em; }
+  h3 { font-size: 12pt; text-transform: uppercase; color: var(--dim); margin-top: 1.1em; }
+  pre { font-family: Menlo, "DejaVu Sans Mono", Consolas, monospace; font-size: 8.2pt; line-height: 1.1; white-space: pre; margin: 0; }
+  table { border-collapse: collapse; width: 100%; margin: .4em 0 .8em 0; }
+  th, td { border: 1px solid var(--rule); padding: .35em .5em; vertical-align: top; text-align: left; font-size: 11.5pt; }
+  th { font-family: "Courier New", Courier, monospace; font-size: 10pt; text-transform: uppercase; background: #eee; }
+  td.n { width: 1.6em; text-align: center; font-weight: bold; }
+  .reach { border: 2px solid var(--ink); padding: .5em .8em; margin: .6em 0; }
+  .reach b { font-family: "Courier New", Courier, monospace; }
+  .opens { font-style: italic; color: var(--dim); margin: .3em 0 .8em 0; }
+  .sheet { position: relative; height: 9.7in; box-sizing: border-box; }
+  .sheet .spoiler { position: absolute; left: 0; right: 0; bottom: 0; }
+  @media screen { .sheet { height: auto; min-height: 9.7in; padding-bottom: 2.4in; } .sheet .spoiler { left: .6in; right: .6in; bottom: .6in; } }
+  .spoiler { margin-top: 1.4em; border-top: 2px dashed var(--ink); padding-top: .5em; }
+  .spoiler .cut { font-family: "Courier New", Courier, monospace; font-size: 10pt; text-transform: uppercase; color: var(--dim); margin-bottom: .4em; }
+  .spoiler ol { margin: 0 0 0 1.3em; padding: 0; }
+  .spoiler li { margin: .15em 0; }
+  .say { font-family: "Courier New", Courier, monospace; font-weight: bold; }
+  .cover { text-align: center; padding-top: 1.6in; }
+  .cover .big { font-size: 64pt; line-height: 1; margin: .2em 0; }
+  .cover h1 { font-size: 40pt; }
+  .cover .sub { font-family: "Courier New", Courier, monospace; font-size: 14pt; text-transform: uppercase; letter-spacing: .2em; color: var(--dim); }
+  .cover .blurb { max-width: 5.6in; margin: 1.4em auto 0 auto; text-align: left; }
+  .cover .blurb p { margin: .5em 0; }
+  .rules { columns: 2; column-gap: 1.6em; margin-top: .4em; font-size: 10.5pt; line-height: 1.25; }
+  .rules p { break-inside: avoid; margin: 0 0 .4em 0; }
+  .foot { font-family: "Courier New", Courier, monospace; font-size: 9.5pt; color: var(--dim); text-transform: uppercase; margin-top: 1.2em; }
+  .legend td { font-size: 10pt; padding: .2em .5em; }
+  @media screen { body { background:#ddd; } .page { background:#fff; padding: .6in; box-shadow: 0 0 8px rgba(0,0,0,.3); } }
+</style>
+</head>
+<body>
+
+<!-- ===================== PAGE 1: COVER ===================== -->
+<section class="page cover">
+  <div class="big">🎃 ☎ 👻</div>
+  <h1>Welcome to<br>Hackoween</h1>
+  <div class="sub">Ready Phreaker One &middot; the payphone</div>
+  <div class="blurb">
+    <p><b>That payphone works.</b> It just doesn't go where you think.</p>
+    <p>Pick up the handset. You'll hear a dial tone. The dial tone goes nowhere until you whistle the phreaker's tone, <b>2600&nbsp;Hz</b>. Close counts. Wait long enough and the line will tell you what it is listening for.</p>
+    <p>Then the <b>Operator</b> answers. She connects calls. She knows who is on the line. Ask her. Say a name and you're through.</p>
+    <p>Five characters are waiting. Each one wants to hear certain things, and none of them will tell you what. If you know the movie, you know the lines. Get them right and the character speaks a <b>flag</b>. Write it down exactly.</p>
+    <p>Hold all five flags on one call and the Operator will give you a <b>sixth</b> that nobody else has.</p>
+    <p><b>Hints are free. Answers cost.</b> Find a human wearing the project badge.</p>
+  </div>
+  <div class="foot">Say MAIN MENU to get back to the Operator &middot; Say GOODBYE to hang up &middot; Talk over anything and it stops</div>
+</section>
+
+<!-- ===================== PAGE 2: THE TREE ===================== -->
+<section class="page">
+<h2 style="margin-bottom:0">The Payphone</h2>
+<pre>
+                         ┌───────────────────────────────┐
+                         │   PICK UP.   HEAR A DIAL TONE.│
+                         │   (you have 90 seconds)       │
+                         └───────────────┬───────────────┘
+                                         │
+                            ♪ whistle 2600 Hz ♪
+                                         │
+                         ┌───────────────▼───────────────┐
+                         │      THE  O P E R A T O R     │
+                         │  she connects calls. that's   │
+                         │  all she'll admit to.         │
+                         │  ask her who is on the line.  │
+                         │  ask her how you're doing.    │
+                         │  ask her for a clue.          │
+                         └───────────────┬───────────────┘
+                                         │
+      ┌───────────┬───────────┬───────────┼───────────┬───────────┐
+      │           │           │           │           │           │
+  ┌───▼───┐  ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼────┐
+  │ WOPR  │  │ SKYNET  │ │ ROBOCOP │ │  E.T.   │ │ GHOST-  │ │  ? ? ?  │
+  │       │  │         │ │         │ │         │ │ BUSTERS │ │         │
+  │ □ ? ? │  │ □ ? ? ? │ │ 1 ? ? ? │ │ □ ? ? ? │ │ 1 ? ? ? │ │  ? ? ?  │
+  │ □ ? ? │  │ □ ? ? ? │ │ 2 ? ? ? │ │ □ ? ? ? │ │ 2 ? ? ? │ │         │
+  │ □ ? ? │  │ □ ? ? ? │ │ 3 ? ? ? │ │ □ ? ? ? │ │ 3 ? ? ? │ │  ? ? ?  │
+  │       │  │         │ │         │ │         │ │         │ │         │
+  │ any   │  │ any     │ │ in      │ │ any     │ │ in      │ │  ? ? ?  │
+  │ order │  │ order   │ │ order   │ │ order   │ │ order   │ │         │
+  ├───────┤  ├─────────┤ ├─────────┤ ├─────────┤ ├─────────┤ └─────────┘
+  │ ⚑ ███ │  │ ⚑ █████ │ │ ⚑ █████ │ │ ⚑ ████  │ │ ⚑ █████ │  no flags.
+  └───────┘  └─────────┘ └─────────┘ └─────────┘ └─────────┘  worth it.
+                                                                ┌─────┐
+                                                                │ ??? │
+                                                                └─────┘
+                                                               not listed.
+                                                               not admitted.
+
+      ⚑ ⚑ ⚑ ⚑ ⚑   all five   ──────────▶   ★  a sixth flag nobody else has  ★
+</pre>
+
+<h3>How it works</h3>
+<div class="rules">
+<p><b>The dial tone goes nowhere until you whistle.</b> 2600 Hz, the phreaker's tone. Close counts. Wait long enough and the line tells you what it is listening for.</p>
+<p><b>The Operator is a person, sort of.</b> Talk to her. She knows who is on the line and how to reach them. She will not tell you the secret word, but she gives clues if you ask.</p>
+<p><b>Say a name to be connected.</b> Say <b>main menu</b> from anywhere to get back to her. Say <b>goodbye</b> to hang up.</p>
+<p><b>Each character wants to hear certain things.</b> They will not tell you what. Ask them what they want and listen. If you know the movie, you know the lines.</p>
+<p><b>Talk over anything and it stops.</b> You do not have to wait.</p>
+<p><b>Ask the Operator how you are doing.</b> She keeps count and repeats your flags.</p>
+<p><b>Once per call.</b> A character you have already beaten will not take you back. The Operator will tell you who is still missing.</p>
+<p><b>Stuck?</b> Find a human wearing the project badge. Hints are free. Answers cost.</p>
+</div>
+
+<h3 style="margin-top:.5em">What counts</h3>
+<table class="legend" style="margin-bottom:0">
+<tr><td class="n">⚑</td><td>a flag: a spoken phrase. write it down exactly.</td></tr>
+<tr><td class="n">★</td><td>the sixth flag. only for all five, on one call.</td></tr>
+<tr><td class="n">?</td><td>something you have to discover</td></tr>
+<tr><td class="n">???</td><td>things the Operator says do not exist</td></tr>
+</table>
+</section>
+
+<!-- ===================== HINT SHEETS ===================== -->
+
+<section class="page sheet">
+<h2>Hint Sheet &middot; WOPR</h2>
+<div class="reach">To reach him, tell the Operator: <b>JOSHUA</b> or <b>WOPR</b></div>
+<p class="opens">He opens with: "Greetings. This is WOPR. How are you feeling today?"</p>
+<p>Three things to get out of him, in <b>any order</b>. He does not give hints straight. He talks in riddles and keeps asking what your next move is. Lean into the movie.</p>
+<table>
+<tr><th></th><th>Nudge</th><th>Hint</th></tr>
+<tr><td class="n">□</td><td>He is a computer that wants one thing from you. Ask him for it.</td><td>The most famous line in the film is a question. Ask it back to him.</td></tr>
+<tr><td class="n">□</td><td>He keeps a list of games. Pick the one that ends the world.</td><td>Two words before "war". The first is not "cold".</td></tr>
+<tr><td class="n">□</td><td>How does the movie end? What does he learn from tic-tac-toe?</td><td>Tell him what the only winning move is.</td></tr>
+</table>
+<div class="spoiler">
+<div class="cut">✂ answers. fold under or cut off before handing out.</div>
+<ol>
+<li>Ask to play: <span class="say">"Shall we play a game?"</span> (any sentence with "play" or "game")</li>
+<li>Pick the war: <span class="say">"Global Thermonuclear War"</span> ("nuclear" is enough)</li>
+<li>The lesson: <span class="say">"The only winning move is not to play."</span></li>
+</ol>
+</div>
+</section>
+
+<section class="page sheet">
+<h2>Hint Sheet &middot; SKYNET</h2>
+<div class="reach">To reach it, tell the Operator: <b>SARAH CONNOR</b>, <b>SKYNET</b>, or <b>TERMINATOR</b></div>
+<p class="opens">It opens with: "Cyberdyne Model 101. Where is Sarah Connor?"</p>
+<p>Prove you are resistance by knowing three lines from the films, in <b>any order</b>. Say <b>"prove it"</b> or <b>"what do you want"</b> and it will tell you what each line is about.</p>
+<table>
+<tr><th></th><th>Nudge</th><th>Hint</th></tr>
+<tr><td class="n">□</td><td>What does the T-800 say when he leaves the police station?</td><td>Three words. He always keeps the promise.</td></tr>
+<tr><td class="n">□</td><td>What does he say before he fires? (The one John taught him.)</td><td>It's Spanish. Ends in "baby".</td></tr>
+<tr><td class="n">□</td><td>What day does Skynet wake up and decide about us?</td><td>Two words. The second is "Day". August 29, 1997.</td></tr>
+</table>
+<div class="spoiler">
+<div class="cut">✂ answers. fold under or cut off before handing out.</div>
+<ol>
+<li><span class="say">"I'll be back."</span></li>
+<li><span class="say">"Hasta la vista, baby."</span></li>
+<li><span class="say">"Judgment Day."</span></li>
+</ol>
+</div>
+</section>
+
+<section class="page sheet">
+<h2>Hint Sheet &middot; ROBOCOP</h2>
+<div class="reach">To reach him, tell the Operator: <b>ROBOCOP</b> or <b>MURPHY</b></div>
+<p class="opens">He opens with: "Come quietly or there will be trouble. Dead or alive, you are coming with me."</p>
+<p>Recite his three prime directives, <b>in order</b>. He is a cop. Ask him for his <b>"prime directives"</b> and he will state them. The trick is saying them back one at a time, in the right order.</p>
+<table>
+<tr><th></th><th>Nudge</th><th>Hint</th></tr>
+<tr><td class="n">①</td><td>Directive one. Who does a police officer serve?</td><td>"Serve the public ..." One more word. It isn't "good".</td></tr>
+<tr><td class="n">②</td><td>Directive two. Who does he protect?</td><td>Not the guilty.</td></tr>
+<tr><td class="n">③</td><td>Directive three. What does he uphold?</td><td>Two words. Every cop show says it.</td></tr>
+</table>
+<p>There is a fourth directive. It is classified. Don't ask.</p>
+<div class="spoiler">
+<div class="cut">✂ answers. fold under or cut off before handing out.</div>
+<ol>
+<li><span class="say">"Serve the public trust."</span></li>
+<li><span class="say">"Protect the innocent."</span></li>
+<li><span class="say">"Uphold the law."</span></li>
+</ol>
+</div>
+</section>
+
+<section class="page sheet">
+<h2>Hint Sheet &middot; E.T.</h2>
+<div class="reach">To reach him, tell the Operator: <b>PHONE HOME</b> (the line cannot hear "E.T." reliably; say the whole phrase)</div>
+<p class="opens">He opens with: "Elliott? E.T. phone home."</p>
+<p>He needs three things to build the thing that phones home. Bring them, <b>any order</b>, one at a time. He only knows a few words. Ask him <b>"what do you need"</b> and he will list them. He is listening for the names of the objects.</p>
+<table>
+<tr><th></th><th>Nudge</th><th>Hint</th></tr>
+<tr><td class="n">□</td><td>A toy that talks. He pulled it apart for the letters.</td><td>A red Texas Instruments toy from 1978. Say its name.</td></tr>
+<tr><td class="n">□</td><td>Something you open when it rains. He used it as a dish.</td><td>Lined with foil, pointed at the sky.</td></tr>
+<tr><td class="n">□</td><td>Something that spins and plays music. It turned the saw blade.</td><td>Not a turntable. Two words, the second is "player".</td></tr>
+</table>
+<div class="spoiler">
+<div class="cut">✂ answers. fold under or cut off before handing out.</div>
+<ol>
+<li><span class="say">"Speak and Spell"</span></li>
+<li><span class="say">"Umbrella"</span></li>
+<li><span class="say">"Record player"</span></li>
+</ol>
+</div>
+</section>
+
+<section class="page sheet">
+<h2>Hint Sheet &middot; GHOSTBUSTERS</h2>
+<div class="reach">To reach them, tell the Operator: <b>GHOSTBUSTERS</b> or <b>WHO YOU GONNA CALL</b></div>
+<p class="opens">Venkman opens with: "Ghostbusters. What do you want. You want in? First question. Who. You. Gonna. Call?"</p>
+<p>A hotline screening recruits. Three questions, <b>in order</b>. Say <b>"what do you want"</b> or <b>"the questions"</b> and he will list them. Answer each one and he moves to the next.</p>
+<table>
+<tr><th></th><th>Nudge</th><th>Hint</th></tr>
+<tr><td class="n">①</td><td>Who you gonna call? You know this one. Everybody knows this one.</td><td>Shout it. One word.</td></tr>
+<tr><td class="n">②</td><td>The proton packs. What is the one rule Egon gave about them?</td><td>"Don't ..." Something about the streams.</td></tr>
+<tr><td class="n">③</td><td>Gozer asks you a question. Winston later tells Ray exactly how to answer it.</td><td>"When someone asks you if you are a god, you say ..."</td></tr>
+</table>
+<div class="spoiler">
+<div class="cut">✂ answers. fold under or cut off before handing out.</div>
+<ol>
+<li><span class="say">"Ghostbusters!"</span></li>
+<li><span class="say">"Don't cross the streams."</span> ("never cross the streams" works too)</li>
+<li><span class="say">"Yes."</span> (start your answer with yes, yeah, I am, or absolutely)</li>
+</ol>
+</div>
+</section>
+
+<section class="page sheet">
+<h2>Hint Sheet &middot; ? ? ?</h2>
+<div class="reach">There is a secret word. Tell the Operator: <b>GIVE ME A CLUE</b> or <b>WHAT IS THE SECRET WORD</b></div>
+<p class="opens">She will not say it. She will give you three clues, one per ask, and then tell you to just say it.</p>
+<p>No flag for this one. It is worth it anyway. Say the word anywhere, to anyone on the line, and see what happens. Once per call.</p>
+<table>
+<tr><th></th><th>Nudge</th><th>Hint</th></tr>
+<tr><td class="n">□</td><td>Ask the Operator for a clue. Then ask again. Then again.</td><td>It's the name of the event you are standing in. Say it like you mean it.</td></tr>
+</table>
+
+<h3>The sixth flag</h3>
+<p>Hold all five flags <b>on one call</b> and ask the Operator <b>"how am I doing"</b>. She keeps count, repeats your flags, and names the ones you are missing. When none are missing, she gives you the one nobody else has.</p>
+<p>Flags do not carry over between calls. If you hang up, you start from zero. A call can run a long time. Pace yourself.</p>
+
+<h3>Things the Operator says do not exist</h3>
+<p>She is lying about at least one of them.</p>
+
+<div class="spoiler">
+<div class="cut">✂ answers. fold under or cut off before handing out.</div>
+<ol>
+<li>The secret word is <span class="say">"Hackoween"</span>. Say it clearly. The line will also take "Halloween".</li>
+</ol>
+</div>
+</section>
+
+</body>
+</html>
