@@ -4,6 +4,7 @@ Bold names are files on the phone. "TTS" means a synthesized voice. Walk it top 
 
 ## 1. The line
 - Pick up → **dial tone** (350+440 Hz). Nothing else happens until you whistle.
+- 2 s in → over the tone, **welcome.wav** (10 s, "Welcome to Hackoween… You want to play a game?"). Plays once per pickup. Whistling during it still works.
 - Wait 30 s → over the tone, TTS: "I am listening for twenty six hundred hertz." (repeats every 30 s)
 - Wait 90 s without whistling → the line hangs up. Hang up, pick up again.
 - Whistle 2600 Hz → short wink → **seize.wav** (kerchunk) → wink → **menu.wav** (Matt: "Hello hacker. Welcome to Hackoween…") → the Operator's TTS opening line → she listens.

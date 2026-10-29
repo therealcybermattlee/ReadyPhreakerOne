@@ -313,6 +313,7 @@ GOODBYE_FRAMES: list[bytes] | None = None       # the "thanks for playing" sign-
 INTRO_FRAMES: dict[str, list[bytes]] = {}       # per-character intro clip, keyed by experience key
 CLIP_FRAMES: dict[str, list[bytes]] = {}        # every <intro_dir>/<name>.wav, keyed by <name> (cutscene clips)
 MENU_GREETING_FRAMES: list[bytes] | None = None # the recorded menu greeting alone (the Operator's opening line)
+SEIZE_WELCOME_FRAMES: list[bytes] | None = None # recorded welcome played over the dial tone shortly after pickup
 LLM_WARM_OK = False                             # the warmup got an answer from Ollama (the Operator needs it)
 
 
@@ -1904,6 +1905,8 @@ class Config:
     dial_tone: bool = True                  # an un-seized line plays a dial tone instead of dead silence
     seize_hint_s: float = 30.0              # after this long un-seized, speak the hint (then every interval)
     seize_hint: str = SEIZE_HINT_DEFAULT
+    seize_welcome: str = ""                 # recorded welcome WAV played once over the dial tone (before any whistle)
+    seize_welcome_s: float = 2.0            # how long after pickup the welcome starts
     enable_operator: bool = True            # the live Operator hosts the call (else the recorded menu loop)
     operator_voice: str = OPERATOR_VOICE_DEFAULT
     operator_speed: int = OPERATOR_SPEED_DEFAULT
@@ -3112,19 +3115,24 @@ async def _do_callback(cfg: Config, dial: str, after_call: str, kind: str) -> No
 
 async def seize_watchdog(sess: CallSession) -> None:
     """Hang up a line nobody whistled on. Off when the gate is off, the line is already seized, or
-    the timeout is 0. Ends the call through the normal teardown (recorded as reason=no_seize)."""
+    the timeout is 0. Ends the call through the normal teardown (recorded as reason=no_seize).
+    Also plays the recorded welcome (--seize-welcome) once, --seize-welcome-s after pickup, and the
+    spoken hint every --seize-hint-s; both go out over the dial tone with the whistle detector live."""
     cfg = sess.cfg
     if sess.seized:
         return
+    t0 = time.monotonic()
     waited = 0.0
+    welcome_at = cfg.seize_welcome_s if SEIZE_WELCOME_FRAMES and cfg.seize_welcome_s >= 0 else None
     hint_at = cfg.seize_hint_s if cfg.seize_hint_s > 0 else None
     while True:
-        # next thing to do: the hint (every seize_hint_s) or the hang-up (at seize_timeout)
+        # next thing to do: the welcome (once), the hint (every seize_hint_s), or the hang-up (at seize_timeout)
+        next_welcome = welcome_at if welcome_at is not None else float("inf")
         next_hint = hint_at if hint_at is not None else float("inf")
         next_end = cfg.seize_timeout if cfg.seize_timeout > 0 else float("inf")
-        if next_hint == float("inf") and next_end == float("inf"):
+        if next_welcome == float("inf") and next_hint == float("inf") and next_end == float("inf"):
             return
-        target = min(next_hint, next_end)
+        target = min(next_welcome, next_hint, next_end)
         await asyncio.sleep(max(0.0, target - waited))
         waited = target
         if sess.seized:
@@ -3133,14 +3141,20 @@ async def seize_watchdog(sess: CallSession) -> None:
             sess.log.info(kv(event="seize_timeout", after_s=cfg.seize_timeout))
             await end_call(sess)
             raise CallEnded("no_seize")
-        # the hint, in the Operator's voice, over the dial tone; the whistle detector keeps listening
-        sess.log.info(kv(event="seize_hint", after_s=round(waited)))
-        try:
-            await sess.play(await tts_frames(cfg.seize_hint, sess.log, voice=cfg.operator_voice,
-                                             speed=cfg.operator_speed, pitch=cfg.operator_pitch), "seize_hint")
-        except PipelineError as e:
-            sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
-        hint_at = waited + cfg.seize_hint_s
+        if target == next_welcome:
+            welcome_at = None
+            sess.log.info(kv(event="seize_welcome", after_s=round(waited, 1)))
+            await sess.play(SEIZE_WELCOME_FRAMES, "seize_welcome")
+        else:
+            # the hint, in the Operator's voice, over the dial tone; the whistle detector keeps listening
+            sess.log.info(kv(event="seize_hint", after_s=round(waited)))
+            try:
+                await sess.play(await tts_frames(cfg.seize_hint, sess.log, voice=cfg.operator_voice,
+                                                 speed=cfg.operator_speed, pitch=cfg.operator_pitch), "seize_hint")
+            except PipelineError as e:
+                sess.log.warning(kv(event="pipeline_error", stage=e.stage, err=e.err[:200]))
+            hint_at = waited + cfg.seize_hint_s
+        waited = time.monotonic() - t0      # clip play time counts toward the hint and the hang-up clocks
 
 
 async def handle_call(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, cfg: Config) -> None:
@@ -3280,6 +3294,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--no-dial-tone", action="store_true", default=env.get("WOPR_DIAL_TONE", "1") in ("0", "false", "no"), help="dead silence before the whistle instead of a dial tone")
     p.add_argument("--seize-hint-s", type=float, default=float(env.get("WOPR_SEIZE_HINT_S", "30")), help="seconds of no whistle before the hint is spoken (repeats each interval); 0 = never")
     p.add_argument("--seize-hint", default=env.get("WOPR_SEIZE_HINT", SEIZE_HINT_DEFAULT), help="what is said over the dial tone to a caller who has not whistled")
+    p.add_argument("--seize-welcome", default=env.get("WOPR_SEIZE_WELCOME", ""), help="recorded WAV played once over the dial tone shortly after pickup (before any whistle)")
+    p.add_argument("--seize-welcome-s", type=float, default=float(env.get("WOPR_SEIZE_WELCOME_S", "2")), help="seconds after pickup the welcome starts")
     p.add_argument("--no-operator", action="store_true", default=env.get("WOPR_OPERATOR", "1") in ("0", "false", "no"), help="host the call with the recorded menu loop instead of the live Operator")
     p.add_argument("--operator-voice", default=env.get("WOPR_OPERATOR_VOICE", OPERATOR_VOICE_DEFAULT))
     p.add_argument("--operator-speed", type=int, default=int(env.get("WOPR_OPERATOR_SPEED", OPERATOR_SPEED_DEFAULT)))
@@ -3311,6 +3327,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
                  stats_port=a.stats_port, no_stt=a.no_stt, attract=a.attract,
                  enable_seize=not a.no_seize, seize_timeout=a.seize_timeout, whistle_once=not a.whistle_always,
                  dial_tone=not a.no_dial_tone, seize_hint_s=a.seize_hint_s, seize_hint=a.seize_hint,
+                 seize_welcome=a.seize_welcome, seize_welcome_s=a.seize_welcome_s,
                  venue=a.venue, secret_word=a.secret_word, secret_word_re=a.secret_word_re, secret_clues=a.secret_clues,
                  enable_operator=not a.no_operator, operator_voice=a.operator_voice,
                  operator_speed=a.operator_speed, operator_pitch=a.operator_pitch,
@@ -3351,7 +3368,7 @@ async def amain(cfg: Config) -> int:
                                                              for e in WAKE_EXPERIENCES if is_game(e.key))))
     validate_games(log)
     global ATTRACT_FRAMES, FLAG_INTRO_FRAMES, GREETING_FRAMES, SONG_FRAMES, OPERATOR_FRAMES, GOODBYE_FRAMES, INTRO_FRAMES, \
-        MENU_GREETING_FRAMES
+        MENU_GREETING_FRAMES, SEIZE_WELCOME_FRAMES
     menu_pad = [b"\x00" * FRAME_BYTES] * max(0, cfg.menu_gap_ms // 20)
     if cfg.menu_audio:
         # Recorded menu greeting, looped with a trailing pause (highest precedence).
@@ -3377,6 +3394,13 @@ async def amain(cfg: Config) -> int:
                         sec=len(ATTRACT_FRAMES) * FRAME_PERIOD_S))
         except (OSError, ValueError, wave.Error) as e:
             log.error(kv(event="attract_failed", path=cfg.attract, err=f"{type(e).__name__}: {e}"[:150]))
+    if cfg.seize_welcome:
+        try:
+            SEIZE_WELCOME_FRAMES = load_attract(cfg.seize_welcome, gain=1.0)   # welcome over the dial tone
+            log.info(kv(event="seize_welcome_audio", path=cfg.seize_welcome, frames=len(SEIZE_WELCOME_FRAMES),
+                        at_s=cfg.seize_welcome_s, sec=round(len(SEIZE_WELCOME_FRAMES) * FRAME_PERIOD_S, 1)))
+        except (OSError, ValueError, wave.Error) as e:
+            log.error(kv(event="seize_welcome_failed", path=cfg.seize_welcome, err=f"{type(e).__name__}: {e}"[:150]))
     if cfg.operator_audio:
         try:
             OPERATOR_FRAMES = load_attract(cfg.operator_audio, gain=1.0)   # recorded hints clip

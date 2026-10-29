@@ -1266,6 +1266,41 @@ class TrunkSeizeTests(unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_watchdog_plays_the_welcome_once_then_the_hints(self):
+        import asyncio
+
+        async def scenario():
+            played = []
+            async def fake_tts(text, log=None, **kw):
+                return [b"\x00" * w.FRAME_BYTES]
+            orig_tts, orig_frames = w.tts_frames, w.SEIZE_WELCOME_FRAMES
+            w.tts_frames = fake_tts
+            w.SEIZE_WELCOME_FRAMES = [b"\x00" * w.FRAME_BYTES] * 3
+            try:
+                sess = self._sess(w.Config(seize_timeout=0.09, seize_hint_s=0.03, seize_welcome_s=0.01))
+                async def rec(frames, what):
+                    played.append(what)
+                sess.play = rec
+                with self.assertRaises(w.CallEnded):
+                    await w.seize_watchdog(sess)
+                self.assertEqual(played[0], "seize_welcome", "the welcome comes first, a moment after pickup")
+                self.assertEqual(played.count("seize_welcome"), 1, "and only once")
+                self.assertGreaterEqual(played.count("seize_hint"), 1, "the hints still follow")
+                # no clip loaded = no welcome, nothing else changes
+                w.SEIZE_WELCOME_FRAMES = None
+                played.clear()
+                sess = self._sess(w.Config(seize_timeout=0.05, seize_hint_s=0.02, seize_welcome_s=0.01))
+                sess.play = rec
+                with self.assertRaises(w.CallEnded):
+                    await w.seize_watchdog(sess)
+                self.assertNotIn("seize_welcome", played)
+                self.assertEqual(w.parse_args([]).seize_welcome_s, 2.0)
+                self.assertEqual(w.parse_args(["--seize-welcome", "/x.wav"]).seize_welcome, "/x.wav")
+            finally:
+                w.tts_frames, w.SEIZE_WELCOME_FRAMES = orig_tts, orig_frames
+
+        asyncio.run(scenario())
+
     def test_watchdog_hangs_up_an_unwhistled_line(self):
         import asyncio
 
