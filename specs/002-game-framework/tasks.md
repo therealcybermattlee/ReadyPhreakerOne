@@ -92,7 +92,7 @@ summonable and behaves per archetype; confirm no shared call-loop code changed t
 **Goal**: Interactive quests award a flag on completion for *any* quest game, not just WOPR; WOPR
 is byte-identical; Skynet, RoboCop, E.T. have real objectives + flags with a proper reveal.
 
-**Independent Test**: Play WOPR to the same `JOSHUA FIVE BY FIVE` reveal (fanfare → flag-intro →
+**Independent Test**: Play WOPR to the same `<WOPR flag>` reveal (fanfare → flag-intro →
 Johnny-5 voice → tally → chess offer); play RoboCop to its flag (reveal in its own voice, tally,
 no chess offer).
 
@@ -110,9 +110,9 @@ no `quest`. `flag_tally(sess)` already counts every experience with a `quest`.
 
 **Checkpoint**: Four quests are winnable; WOPR regression proven; `won` recorded per game key.
 ✅ Done 2026-09-18 (86 tests). Content as shipped: Skynet = I'll be back / hasta la vista / Judgment Day
-(any order, flag `CYBERDYNE MODEL ONE ZERO ONE`); RoboCop = the three prime directives **in order**
-(flag `DIRECTIVE FOUR CLASSIFIED`); E.T. = Speak & Spell / umbrella / record player (any order, flag
-`I WILL BE RIGHT HERE`). Each objective has a canned `response` line spoken on hit (no LLM round trip).
+(any order, flag `<Skynet flag>`); RoboCop = the three prime directives **in order**
+(flag `<RoboCop flag>`); E.T. = Speak & Spell / umbrella / record player (any order, flag
+`<E.T. flag>`). Each objective has a canned `response` line spoken on hit (no LLM round trip).
 The per-call `won`/`points`/`beats` fields stay the WOPR funnel via `CallSession.wopr_quest`.
 
 ---

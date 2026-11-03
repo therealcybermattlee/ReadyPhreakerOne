@@ -36,7 +36,7 @@ A caller summons an interactive character (e.g. WOPR) and holds a conversation i
 
 **Acceptance Scenarios**:
 
-1. **Given** WOPR, **When** the caller re-enacts the four WarGames beats in any order, **Then** WOPR reveals `JOSHUA FIVE BY FIVE` exactly as before and the call is marked won.
+1. **Given** WOPR, **When** the caller re-enacts the four WarGames beats in any order, **Then** WOPR reveals `<WOPR flag>` exactly as before and the call is marked won.
 2. **Given** a quest game whose objectives are ordered, **When** the caller satisfies them out of order, **Then** the game does not award the win until the objectives are satisfied in the required order.
 3. **Given** any quest game, **When** the caller never completes the objectives and hangs up, **Then** the call is recorded with the objectives reached but not won, and progress does not leak between calls.
 4. **Given** a caller mid-quest, **When** they whistle 2600 Hz, **Then** the barge-in restarts as WOPR with fresh quest progress (existing behavior preserved).
@@ -102,7 +102,7 @@ The owner reviews per-game statistics. Every game reports a per-archetype comple
 - **FR-006**: A Quest game MUST hold a caller in a multi-turn conversation in the game's voice and silently track progress toward its objectives, each matched from caller utterances using tolerant matching that tolerates local speech-to-text mishearings.
 - **FR-007**: A Quest game MUST support objectives that are required in a fixed order OR in any order, per the game's declaration.
 - **FR-008**: When all objectives are met, a Quest game MUST mark the game won, speak its reveal line, and grant its flag, optionally with a fanfare and a distinct reveal voice/clip.
-- **FR-009**: WOPR's existing quest (four WarGames beats → `JOSHUA FIVE BY FIVE`, its chess Easter egg, and its whistle/Joshua entry) MUST behave identically after the framework is introduced.
+- **FR-009**: WOPR's existing quest (four WarGames beats → `<WOPR flag>`, its chess Easter egg, and its whistle/Joshua entry) MUST behave identically after the framework is introduced.
 - **FR-010**: Quest progress MUST be per call and MUST NOT leak between callers or persist across calls.
 
 **Cutscene archetype**

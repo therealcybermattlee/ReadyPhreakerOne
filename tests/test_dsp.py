@@ -258,6 +258,24 @@ class SynthTests(unittest.TestCase):
         self.assertFalse(w.window_passes(win)[0])   # the wink must never pass the 2600 test
 
 
+class FlagOverrideTests(unittest.TestCase):
+    """The flags in the source are samples; an installation sets its own through the environment."""
+
+    def test_flags_come_from_the_environment_per_game(self):
+        try:
+            n = w.apply_flag_overrides({"WOPR_FLAG_SKYNET": "RED ONE", "WOPR_FLAG_ET": "  ", "WOPR_FLAG_HAL": "x"})
+            self.assertEqual(n, 1, "blank values and non-quest keys are ignored")
+            cfg = w.Config(flag="WOPR ENV FLAG")
+            self.assertEqual(w.flag_for(w.SKYNET_EXPERIENCE, cfg), "RED ONE")
+            self.assertEqual(w.flag_for(w.ET_EXPERIENCE, cfg), w.ET_QUEST.flag, "unset = the sample literal")
+            self.assertEqual(w.flag_for(w.WOPR_EXPERIENCE, cfg), "WOPR ENV FLAG", "WOPR keeps using WOPR_FLAG")
+            for q in (w.SKYNET_QUEST, w.ROBOCOP_QUEST, w.GHOSTBUSTERS_QUEST, w.ET_QUEST):
+                self.assertTrue(q.flag.startswith("SAMPLE "), "no real flag may be checked in")
+            self.assertTrue(w.FLAG_DEFAULT.startswith("SAMPLE ") and w.MASTER_FLAG_DEFAULT.startswith("SAMPLE "))
+        finally:
+            w.apply_flag_overrides({})
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -375,8 +393,8 @@ class MovieQuestTests(unittest.TestCase):
         self.assertEqual(q.progress, "0/3")
 
     def test_reveal_text_substitutes_flag(self):
-        reveal = w.FLAG_TEXT_DEFAULT.replace("{flag}", "JOSHUA FIVE BY FIVE")
-        self.assertIn("JOSHUA FIVE BY FIVE", reveal)
+        reveal = w.FLAG_TEXT_DEFAULT.replace("{flag}", w.FLAG_DEFAULT)
+        self.assertIn(w.FLAG_DEFAULT, reveal)
         self.assertNotIn("{flag}", reveal)
 
 
@@ -881,7 +899,7 @@ class QuestWinTests(unittest.TestCase):
         # WOPR leaves reveal/flag empty so the env-overridable cfg values keep applying
         self.assertEqual(w.WOPR_QUEST.flag, "")
         self.assertEqual(w.WOPR_QUEST.reveal, "")
-        self.assertIn("JOSHUA FIVE BY FIVE", w.FLAG_TEXT_DEFAULT.replace("{flag}", w.FLAG_DEFAULT))
+        self.assertIn(w.FLAG_DEFAULT, w.FLAG_TEXT_DEFAULT.replace("{flag}", w.FLAG_DEFAULT))
 
     def test_skynet_unlocks_any_order_with_mishears(self):
         q = w.QuestState(quest=w.SKYNET_QUEST)
@@ -1716,8 +1734,8 @@ class FifthFlagTests(unittest.TestCase):
             self.assertIn("FIFTH FLAG", w.flag_tally(s))                    # the incentive, one to go
             self.assertIn("4 OF 5", w.flag_report(s)); self.assertNotIn("TEST MASTER", w.flag_report(s))
             self.assertIn("ONE MORE AND THE FIFTH FLAG IS YOURS", w.flag_report(s))
-            self.assertIn("ROBOCOP: DIRECTIVE FOUR CLASSIFIED", w.flag_report(s))
-            self.assertIn("WOPR: JOSHUA FIVE BY FIVE", w.flag_report(s))
+            self.assertIn(f"ROBOCOP: {w.ROBOCOP_QUEST.flag}", w.flag_report(s))
+            self.assertIn(f"WOPR: {w.FLAG_DEFAULT}", w.flag_report(s))
             s.note_game("et", won=True)
             t = w.flag_tally(s)
             self.assertTrue(t.startswith("ALL 5 FLAGS")); self.assertEqual(t.count("TEST MASTER"), 2)
@@ -1869,4 +1887,3 @@ class GhostbustersTests(unittest.TestCase):
         self.assertTrue(w.GHOSTBUSTERS_QUEST.help_re.search("what do you want from me"))
         self.assertIn("WHO YOU GONNA CALL", w.OPERATOR_HINTS_DEFAULT)
         self.assertTrue(w.GHOSTBUSTERS_EXPERIENCE.directory.say[0] in "who you gonna call")
-

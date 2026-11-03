@@ -164,7 +164,7 @@ list); `tiny.en` (kept as a knob); MLX whisper (new dependency).
 **Decision**:
 - Runtime: `brew upgrade ollama`, then `ollama serve` as a LaunchDaemon (own plist, not
   `brew services`) running as `mattlee` with explicit env: `OLLAMA_HOST=127.0.0.1:11434`,
-  `OLLAMA_MODELS=/Users/mattlee/.ollama/models` (keep the existing store),
+  `OLLAMA_MODELS=/Users/<user>/.ollama/models` (keep the existing store),
   `OLLAMA_KEEP_ALIVE=-1` (model stays resident), `OLLAMA_NUM_PARALLEL=1`. Provisioning stops the
   hand-started instance first.
 - Model: **`qwen3:8b`**, because it is already on the asset (no 5 GB download, honours

@@ -28,7 +28,7 @@ Expected: green, including new tests for
 Summon WOPR (whistle 2600 Hz or say "Joshua"), then re-enact the four beats in any order:
 Joshua → ask to play a game → global thermonuclear war → "the only winning move is not to play".
 
-Expected: the flag reveal `JOSHUA FIVE BY FIVE` plays exactly as before (fanfare + flag intro +
+Expected: the flag reveal `<WOPR flag>` plays exactly as before (fanfare + flag intro +
 Johnny-5 reveal voice), the chess offer follows, and the call logs `flag_unlocked` and
 `event=call_metrics … won=1`. No behavioral difference from the pre-framework build.
 

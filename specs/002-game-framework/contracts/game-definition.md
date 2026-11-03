@@ -98,7 +98,7 @@ Per-call `games[key]` gains `completed: bool`. Aggregate `game_stats.json` `game
 
 - Greeter menu on pickup, `operator` hints, and the standalone `goodbye` sign-off behave as before
   and are not games.
-- WOPR: same four beats → `JOSHUA FIVE BY FIVE`, same chess follow-on, same whistle/Joshua entry,
+- WOPR: same four beats → `<WOPR flag>`, same chess follow-on, same whistle/Joshua entry,
   same barge-in on whistle.
 - Per-call recording and analytics run for every game and archetype.
 - No network access at call time.

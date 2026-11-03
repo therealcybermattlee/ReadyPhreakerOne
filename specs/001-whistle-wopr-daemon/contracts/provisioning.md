@@ -47,7 +47,7 @@ under `/opt/wopr/log/`, `ThrottleInterval=5`.
 
 | Label | Program | Notes |
 |---|---|---|
-| `com.crunchwhistle.ollama` | `/opt/homebrew/bin/ollama serve` | `OLLAMA_HOST=127.0.0.1:11434`, `OLLAMA_MODELS=/Users/mattlee/.ollama/models`, `OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_NUM_PARALLEL=1` |
+| `com.crunchwhistle.ollama` | `/opt/homebrew/bin/ollama serve` | `OLLAMA_HOST=127.0.0.1:11434`, `OLLAMA_MODELS=/Users/<user>/.ollama/models`, `OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_NUM_PARALLEL=1` |
 | `com.crunchwhistle.asterisk` | `/opt/asterisk/sbin/asterisk -f -U mattlee -G staff -C /opt/asterisk/etc/asterisk/asterisk.conf` | `ProcessType=Interactive` |
 | `com.crunchwhistle.wopr` | `/opt/wopr/venv/bin/python /opt/wopr/wopr_daemon.py` | env from `/opt/wopr/wopr.env`; `ProcessType=Interactive` |
 

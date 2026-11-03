@@ -528,10 +528,12 @@ FLAG_TEXT_DEFAULT = (
     "ACCESS GRANTED, PROFESSOR FALKEN. YOUR FLAG IS {flag}. "
     "REPEAT, YOUR FLAG IS {flag}."
 )
-FLAG_DEFAULT = "JOSHUA FIVE BY FIVE"
+# Flags are set per installation in wopr.env (WOPR_FLAG, WOPR_MASTER_FLAG, WOPR_FLAG_<GAME>). The values
+# in this file are samples so a fresh checkout runs; they are not the ones any event used.
+FLAG_DEFAULT = "SAMPLE FLAG ZERO"
 # The fifth flag: spoken once the caller holds every quest flag, and repeated by the Operator on
 # request. Author-chosen; override with WOPR_MASTER_FLAG (keep it speakable).
-MASTER_FLAG_DEFAULT = "BLUE BOX ALPHA SEVEN"
+MASTER_FLAG_DEFAULT = "SAMPLE MASTER FLAG"
 # Spoken over the dial tone to a caller who has not whistled yet (every --seize-hint-s seconds).
 SEIZE_HINT_DEFAULT = "I AM LISTENING FOR TWENTY SIX HUNDRED HERTZ."
 JOSHUA_LINE_DEFAULT = ("GREETINGS PROFESSOR FALKEN. IT HAS BEEN A LONG TIME. "
@@ -730,7 +732,7 @@ SKYNET_QUEST = Quest(
                        r"what (are|were) the (lines|words)|what do i need)\b", re.I),
     help_text="PROVE IT. WHAT DO I SAY WHEN I LEAVE. WHAT DO I SAY BEFORE I FIRE. WHAT DAY DOES SKYNET WAKE.",
     reveal="COME WITH ME IF YOU WANT TO LIVE. YOUR FLAG. {flag}. AGAIN. {flag}.",
-    flag="CYBERDYNE MODEL ONE ZERO ONE", fanfare=True)
+    flag="SAMPLE FLAG ONE", fanfare=True)       # real value: WOPR_FLAG_SKYNET
 
 # RoboCop: recite the three prime directives IN ORDER (ordered=True; one breath is fine).
 ROBOCOP_QUEST = Quest(
@@ -750,7 +752,7 @@ ROBOCOP_QUEST = Quest(
               "RECITE THEM. IN ORDER.",
     order_text="INCORRECT SEQUENCE. DIRECTIVE {n} FIRST. {label}.",
     reveal="DIRECTIVES CONFIRMED. YOUR FLAG. {flag}. REPEAT. {flag}.",
-    flag="DIRECTIVE FOUR CLASSIFIED", fanfare=True)
+    flag="SAMPLE FLAG TWO", fanfare=True)       # real value: WOPR_FLAG_ROBOCOP
 
 # E.T.: bring the three parts of the communicator (any order); the reveal is E.T. phoning home.
 # Ghostbusters (Hackoween 2026): three beats IN ORDER. Answer the call, the safety tip, Gozer's question.
@@ -776,7 +778,7 @@ GHOSTBUSTERS_QUEST = Quest(
         (re.compile(r"\b(stay puft|marshmallow)\b", re.I), "IT'S THE STAY PUFT MARSHMALLOW MAN. RAY, WHAT DID YOU DO."),
     ),
     reveal="WHEN SOMEONE ASKS YOU IF YOU ARE A GOD, YOU SAY YES. YOUR FLAG. {flag}. AGAIN. {flag}.",
-    flag="TOTAL PROTONIC REVERSAL", fanfare=True)
+    flag="SAMPLE FLAG THREE", fanfare=True)     # real value: WOPR_FLAG_GHOSTBUSTERS
 
 ET_QUEST = Quest(  # E.T.
     objectives=(
@@ -794,7 +796,7 @@ ET_QUEST = Quest(  # E.T.
                        r"hint|help|what are you building)\b", re.I),
     help_text="E.T. NEED THREE THINGS. SPEAK AND SPELL. UMBRELLA. RECORD PLAYER. BRING THEM. ONE AT A TIME.",
     reveal="THEY COME. YOUR FLAG. {flag}. AGAIN. {flag}. BE GOOD.",
-    flag="I WILL BE RIGHT HERE", fanfare=True)
+    flag="SAMPLE FLAG FOUR", fanfare=True)      # real value: WOPR_FLAG_ET
 
 
 @dataclasses.dataclass(frozen=True)
@@ -956,6 +958,30 @@ def is_game(key: str) -> bool:
     return key in GAME_KEYS
 
 
+# Per-installation flag values, keyed by experience key, from WOPR_FLAG_<KEY> (e.g. WOPR_FLAG_SKYNET).
+# The Quest.flag literals in this file are samples; an event's real flags live only in its wopr.env.
+FLAG_OVERRIDES: dict[str, str] = {}
+
+
+def flag_for(exp: "Experience", cfg: "Config") -> str:
+    """The flag a won quest speaks: the environment's value for this game, else the quest's own
+    literal, else cfg.flag (WOPR's, which has always been WOPR_FLAG)."""
+    if exp.key in FLAG_OVERRIDES:
+        return FLAG_OVERRIDES[exp.key]
+    return (exp.quest.flag if exp.quest else "") or cfg.flag
+
+
+def apply_flag_overrides(env: "Mapping[str, str]") -> int:
+    """Read WOPR_FLAG_<KEY> for every quest experience into FLAG_OVERRIDES. Returns how many were set."""
+    FLAG_OVERRIDES.clear()
+    for e in WAKE_EXPERIENCES:
+        if e.quest:
+            v = (env.get(f"WOPR_FLAG_{e.key.upper()}") or "").strip()
+            if v:
+                FLAG_OVERRIDES[e.key] = v
+    return len(FLAG_OVERRIDES)
+
+
 def flags_won(sess) -> tuple[int, int]:
     """(won, total) quest flags for this call."""
     quests = [e for e in WAKE_EXPERIENCES if e.quest]
@@ -987,7 +1013,7 @@ def flag_report(sess) -> str:
     for e in WAKE_EXPERIENCES:
         if e.quest and sess.games.get(e.key, {}).get("won"):
             name = e.directory.name if e.directory else e.key.upper()
-            held.append(f"{name}: {e.quest.flag or sess.cfg.flag}")
+            held.append(f"{name}: {flag_for(e, sess.cfg)}")
     lines = ". ".join(held)
     if won >= n:
         m = sess.cfg.master_flag
@@ -2691,7 +2717,7 @@ async def conversation(sess: CallSession) -> None:
                     # WOPR's reveal/flag stay env-overridable (WOPR_FLAG, WOPR_FLAG_TEXT); every other
                     # quest declares its own. The reveal voice is the game's own unless declared, except
                     # WOPR keeps its Johnny-5 reveal voice from cfg.
-                    flag = quest.flag or cfg.flag
+                    flag = flag_for(sess.experience, cfg)
                     reveal = (quest.reveal or cfg.flag_text).replace("{flag}", flag)
                     sess.log.info(kv(event="flag_unlocked", key=sess.experience.key, flag=flag))
                     sess.note_game(sess.experience.key, won=True)
@@ -2799,7 +2825,7 @@ async def conversation(sess: CallSession) -> None:
                         continue
             if quest is not None and sess.quest.unlocked and FLAG_REPEAT_RE.search(text):
                 # A won character repeats its flag on request (the ceremony may have been missed).
-                flag = quest.flag or cfg.flag
+                flag = flag_for(sess.experience, cfg)
                 line = f"YOUR FLAG IS {flag}. AGAIN. {flag}."
                 sess.record_turn(text, line, "flag_repeat")
                 sess.no_barge = True
@@ -3360,6 +3386,8 @@ async def amain(cfg: Config) -> int:
     log.info(kv(event="config", bind=cfg.bind, port=cfg.port, stub_llm=int(cfg.stub_llm),
                 ollama_url=cfg.ollama_url, model=cfg.model, whisper=cfg.whisper_model,
                 python=sys.version.split()[0]) + " " + tunables_line())
+    n_flags = apply_flag_overrides(os.environ)
+    log.info(kv(event="flags", from_env=n_flags, games=sum(1 for e in WAKE_EXPERIENCES if e.quest)))
     apply_venue(cfg.venue, cfg.secret_word or None, cfg.secret_word_re or None,
                 tuple(c.strip() for c in cfg.secret_clues.split("|") if c.strip()) or None)
     log.info(kv(event="venue", venue=VENUE, secret_word_len=len(SECRET_WORD), clues=len(OPERATOR_CLUES)))

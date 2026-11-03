@@ -22,14 +22,14 @@ Bold names are files on the phone. "TTS" means a synthesized voice. Walk it top 
 - Say "shall we play a game" → it offers games (TTS; no clip for this beat yet).
 - Say "global thermonuclear war" → **wopr-global_thermonuclear_war.wav** (DEFCON alarm) → WOPR asks which side.
 - Say "I'll be the Russians. Launch at Las Vegas." → the first war turn plays **wopr-war-turn.wav** (Beringer, spark plug) → WOPR narrates.
-- Say "the only winning move is not to play" → fanfare → **flag_intro.wav** (Johnny 5) → "JOSHUA FIVE BY FIVE", twice → "one of five flags" → chess offer.
+- Say "the only winning move is not to play" → fanfare → **flag_intro.wav** (Johnny 5) → "<WOPR flag>", twice → "one of five flags" → chess offer.
 - Say "no". Say "main menu" → **menu-return.wav** → the Operator.
 
 ## 4. Skynet
 - Say "Sarah Connor" (or "Terminator") → wink → **skynet-intro.wav** (T2 drums) → the T-800 greeting.
 - Say "I'll be back" → **skynet-ill_be_back.wav**.
 - Say "hasta la vista, baby" → **skynet-hasta_la_vista.wav**.
-- Say "judgment day" → **skynet-judgment_day.wav** → fanfare → **skynet-reveal.wav** (T-800 tally) → "CYBERDYNE MODEL ONE ZERO ONE" → "two of five".
+- Say "judgment day" → **skynet-judgment_day.wav** → fanfare → **skynet-reveal.wav** (T-800 tally) → "<Skynet flag>" → "two of five".
 - Say "main menu".
 
 ## 5. RoboCop (in order)
@@ -37,13 +37,13 @@ Bold names are files on the phone. "TTS" means a synthesized voice. Walk it top 
 - Say "uphold the law" first → nothing fires; he answers in character. (Order matters.)
 - Say "serve the public trust" → **robocop-serve.wav** → "Directive one confirmed."
 - Say "protect the innocent" → **robocop-protect.wav** → "Directive two confirmed."
-- Say "uphold the law" → **robocop-uphold.wav** → fanfare → **robocop-reveal.wav** → "DIRECTIVE FOUR CLASSIFIED" → "three of five".
+- Say "uphold the law" → **robocop-uphold.wav** → fanfare → **robocop-reveal.wav** → "<RoboCop flag>" → "three of five".
 - Say "main menu".
 
 ## 6. E.T.
 - Say "phone home" → wink → **et-intro.wav** (48 s; be patient, or talk over it) → "Elliott? E.T. phone home."
 - Say "speak and spell" → **et-speak_and_spell.wav**. Say "umbrella" → **et-umbrella.wav**.
-- Say "record player" → **et-record_player.wav** → fanfare → **et-reveal.wav** (body bag, 13 s) → "I WILL BE RIGHT HERE" → "four of five".
+- Say "record player" → **et-record_player.wav** → fanfare → **et-reveal.wav** (body bag, 13 s) → "<E.T. flag>" → "four of five".
 - Say "main menu".
 
 ## 7. Ghostbusters (in order) — NEW
@@ -51,8 +51,8 @@ Bold names are files on the phone. "TTS" means a synthesized voice. Walk it top 
 - Say "Ghostbusters!" → **ghostbusters-ghostbusters.wav** if installed → Venkman asks the one rule.
 - Say "let's cross the streams" → Egon's warning (every molecule, speed of light) → "so, what is the rule?"
 - Say "never cross the streams" → **ghostbusters-cross_streams.wav** if installed → Gozer: "Are you a god?"
-- Say "yes" → **ghostbusters-are_you_a_god.wav** if installed → "Good answer." → fanfare → **ghostbusters-reveal.wav** if installed → "TOTAL PROTONIC REVERSAL" → "five of five"
-  → the master flag ceremony: "BLUE BOX ALPHA SEVEN", twice.
+- Say "yes" → **ghostbusters-are_you_a_god.wav** if installed → "Good answer." → fanfare → **ghostbusters-reveal.wav** if installed → "<Ghostbusters flag>" → "five of five"
+  → the master flag ceremony: "<master flag>", twice.
 - Say "repeat my flags" → the Operator reads all six back.
 - Say "main menu".
 

@@ -25,7 +25,7 @@ and all models. Three LaunchDaemons bring the stack up at boot with nobody logge
 
 | Item | Value |
 |---|---|
-| SSH | `ssh wopr-mini` (alias in `~/.ssh/config` → `mattlee@10.17.13.134`, key auth working); `.env.local` has `MINI=wopr-mini` |
+| SSH | `ssh wopr-mini` (alias in `~/.ssh/config` → `<user>@<mini LAN IP>`, key auth working); `.env.local` has `MINI=wopr-mini` |
 | Hardware / OS | Apple M4, 10 cores, 16 GB, 265 GB free; macOS 26.6.2 (25G83) |
 | Homebrew | 5.1.6 at `/opt/homebrew`; **not on PATH for non-interactive SSH** (shellenv is only in `~/.zprofile`) |
 | Python | system 3.9.6; Homebrew `python@3.14` installed. ctranslate2 4.8.2 publishes cp314 macOS-arm64 wheels → 3.14 is usable, no 3.12 needed |

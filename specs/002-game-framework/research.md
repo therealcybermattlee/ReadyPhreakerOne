@@ -31,7 +31,7 @@ once (existing `sess.closed` flag).
 an ordered/any-order list of **Objectives** (name, tolerant regex matcher, label), a reveal line
 (with `{flag}` substitution), a flag token, and optional reveal presentation (fanfare wink, reveal
 voice/speed/pitch, intro clip). A single `QuestState` per call tracks hit objectives and win, replacing
-the WOPR-specific `MovieQuest`. WOPR is defined as the existing four beats + `JOSHUA FIVE BY FIVE` +
+the WOPR-specific `MovieQuest`. WOPR is defined as the existing four beats + `<WOPR flag>` +
 its chess follow-on, producing byte-identical behavior.
 
 **Rationale**: The current `MovieQuest` already models "beats matched by tolerant regex → unlocked";

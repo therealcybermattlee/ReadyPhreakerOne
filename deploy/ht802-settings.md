@@ -11,7 +11,7 @@ The SIP password is printed exactly once by `deploy/provision.sh` (it is also st
 
 | Setting | Value | Why |
 |---|---|---|
-| Primary SIP Server | `<mini LAN IP>` (currently 10.17.13.134) | Asterisk on the mini |
+| Primary SIP Server | `<mini LAN IP>`  | Asterisk on the mini |
 | Outbound Proxy | *(blank)* | same LAN, no proxy |
 | SIP Transport | UDP | matches `pjsip.conf` transport |
 | Register Expiration | 1 (minute) | fast re-registration after ATA/mini reboot |

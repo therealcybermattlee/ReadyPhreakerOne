@@ -177,7 +177,7 @@ secret never leaks or fires early):
 2. choose **global thermonuclear war**
 3. deliver the lesson — **"the only winning move is not to play"**
 
-On the third, WOPR plays a fanfare and speaks the flag (default `JOSHUA FIVE BY FIVE`). The beat
+On the third, WOPR plays a fanfare and speaks the flag (`WOPR_FLAG` in `wopr.env`). The beat
 regexes are tolerant of local-STT mishears (e.g. "Joshua" → "Noshua"); Joshua and the winning-move
 line are the real gates. Every beat logs `event=quest beat=… progress=n/3`, and the reveal logs
 `event=flag_unlocked flag=…`.
@@ -289,7 +289,7 @@ sudo ./deploy/firewall.sh persist   # boot-time loader (com.crunchwhistle.pf)
 sudo ./deploy/firewall.sh status
 ```
 
-The dead-man auto-disables pf if `enable` locks you out. SIP/RTP are scoped to 10.17.13.0/24;
+The dead-man auto-disables pf if `enable` locks you out. SIP/RTP are scoped to <your LAN>/24;
 if the ATA moves subnets, edit the conf and re-run `enable`/`keep`.
 
 ## Operations
@@ -318,7 +318,7 @@ The mini's idle sleep was 1 minute out of the box (it slept mid-harness once); p
 
 ## First real call (2026-09-08)
 
-HT802 at 10.17.13.139 registered with 3 ms RTT. Off-hook auto-dial to 2600. A human whistle
+HT802 at <ATA LAN IP> registered with 3 ms RTT. Off-hook auto-dial to 2600. A human whistle
 through the payphone handset scored ratio 7.3 / purity 0.40 (well inside the gates), the wink
 and greeting played, and a six-turn conversation followed. Highlights from the log:
 
@@ -330,3 +330,13 @@ and greeting played, and a six-turn conversation followed. Highlights from the l
 Note the HT802's current firmware puts the profile settings under the FXS PORT1 tabs (General /
 SIP / Codec / Call Settings) rather than a separate Profiles page; `deploy/ht802-settings.md`
 lists the same values.
+
+## License
+
+Copyright Matt Lee. This work is licensed under the [Creative Commons Attribution 4.0 International
+License](https://creativecommons.org/licenses/by/4.0/) (CC BY 4.0): use it, change it, build your own
+booth, just credit this project. See `LICENSE`.
+
+The movie clips, songs and sound effects the booth plays are **not** part of this repository and are
+not covered by this license; source your own.
+

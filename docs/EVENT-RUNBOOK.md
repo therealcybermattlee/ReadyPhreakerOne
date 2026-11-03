@@ -6,7 +6,7 @@ The phone needs no internet. Ollama, Whisper and the clips all live on the mini.
 - `ssh wopr-mini 'grep -E "event=(venue|games|listen)" /opt/wopr/log/wopr.log | tail -3'` → `venue=Hackoween`, `n=9`, `listen`.
 - Make sure the mini can join a network you will have on site (venue Wi-Fi or your phone's hotspot).
   Add the hotspot as a known network on the mini **now**, at home, while it has a screen or while you can
-  reach it: System Settings → Wi-Fi → Known Networks. On site, `ssh mattlee@<ip from the hotspot's client list>`.
+  reach it: System Settings → Wi-Fi → Known Networks. On site, `ssh <user>@<ip from the hotspot's client list>`.
 - Pack: the payphone, the HT802 ATA, both power bricks, the Ethernet cable ATA↔mini (en0, the island),
   the printed tree (`docs/PHONE-TREE-PRINT.md`), the sound check (`docs/SOUND-CHECK.md`), a laptop.
 
